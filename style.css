@@ -1,0 +1,33 @@
+body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; background:#f5f5f5; color:#222; }
+    .app { max-width: 980px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.7rem; margin-bottom: 0.25rem; }
+    .subtitle { font-size:0.9rem; color:#555; margin-bottom:1rem; }
+    .card { background:#fff; border-radius: 8px; padding: 1.25rem 1.5rem; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+    .controls { display:flex; flex-wrap:wrap; gap:0.75rem 1.5rem; align-items:flex-end; margin-bottom: 1rem; }
+    .control-group { display:flex; flex-direction:column; gap:0.25rem; font-size:0.85rem; min-width: 180px; }
+    label { font-weight: 500; }
+    input[type=number], select { padding:0.25rem 0.4rem; font-size:0.9rem; }
+    button { padding:0.5rem 0.9rem; border-radius: 999px; border: none; cursor: pointer; font-size:0.9rem; font-weight:500; }
+    button.primary { background:#01696f; color:#fff; }
+    button.secondary { background:#e0e0e0; color:#222; }
+    button:disabled { opacity:0.5; cursor:default; }
+    .question-text { margin:0.75rem 0 1rem; font-weight:500; white-space:pre-line; }
+    .options { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:0.35rem; }
+    .options li label { display:flex; gap:0.5rem; align-items:flex-start; cursor:pointer; }
+    .options input { margin-top:0.15rem; }
+    .options li.opt-correct { background:#e8f5e9; border-radius:6px; }
+    .options li.opt-wrong { background:#ffebee; border-radius:6px; }
+    .q-meta { font-size:0.8rem; color:#666; margin-bottom:0.25rem; }
+    .bottom-bar { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; justify-content:space-between; margin-top:1rem; border-top:1px solid #eee; padding-top:0.75rem; font-size:0.85rem; }
+    .score { margin-top:1rem; padding:0.75rem 1rem; border-radius:6px; background:#e8f5e9; color:#1b5e20; font-size:0.9rem; }
+    .score.bad { background:#ffebee; color:#b71c1c; }
+    .details { margin-top:0.75rem; max-height:260px; overflow:auto; font-size:0.8rem; border-top:1px solid #eee; padding-top:0.5rem; }
+    .details summary { cursor:pointer; font-weight:500; }
+    .details table { width:100%; border-collapse:collapse; margin-top:0.5rem; }
+    .details th, .details td { padding:0.25rem 0.4rem; border-bottom:1px solid #f0f0f0; text-align:left; }
+    @media (max-width: 720px) {
+      .card { padding:1rem; }
+      .controls { flex-direction:column; align-items:flex-start; }
+      .control-group { min-width: auto; width:100%; }
+      .bottom-bar { flex-direction:column; align-items:flex-start; }
+    }
