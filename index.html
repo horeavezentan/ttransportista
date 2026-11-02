@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#090d1c" />
   <meta name="description" content="Practica y prepara tu título de transportista con tests y supuestos prácticos." />
-  <title>Test título de transportista</title>
+  <title>Test título de transportista · Versión 14.0</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -53,7 +53,6 @@
         </button>
         <div class="menu-secondary-actions">
           <button class="menu-action menu-action-small" id="menuOptionsBtn" type="button"><span aria-hidden="true">⚙️</span> Opciones</button>
-          <button class="menu-action menu-action-small" id="menuCreditsBtn" type="button"><span aria-hidden="true">✦</span> Créditos</button>
         </div>
       </div>
       <p class="local-save-note"><span aria-hidden="true">💾</span> Progreso guardado localmente en este dispositivo</p>
@@ -77,6 +76,18 @@
             <option value="inferno">Inferno</option>
             <option value="apocalipsis" selected>Apocalipsis</option>
           </select>
+        </div>
+        <label class="setting-row" for="shakeEnabled">
+          <span><strong>Temblor durante las rachas</strong><small>Activa o desactiva la sacudida continua de la pantalla.</small></span>
+          <input id="shakeEnabled" type="checkbox" checked />
+        </label>
+        <div class="setting-row setting-row-column">
+          <label for="shakeMaxDistance"><strong>Intensidad máxima del temblor</strong><small>Desplazamiento máximo de la pantalla.</small></label>
+          <div class="range-setting"><input id="shakeMaxDistance" type="range" min="0.5" max="2" step="0.1" value="2" /><output id="shakeMaxDistanceValue">2.0 px</output></div>
+        </div>
+        <div class="setting-row setting-row-column">
+          <label for="shakeBaseDuration"><strong>Velocidad del temblor</strong><small>Duración inicial de cada ciclo. Menos milisegundos significa más rápido; la racha lo acelera progresivamente.</small></label>
+          <div class="range-setting"><input id="shakeBaseDuration" type="range" min="100" max="1000" step="50" value="1000" /><output id="shakeBaseDurationValue">1000 ms</output></div>
         </div>
         <label class="setting-row" for="reducedMotionToggle">
           <span><strong>Reducir movimiento</strong><small>Reduce las animaciones y los destellos.</small></span>
@@ -108,6 +119,17 @@
         <small id="profileSavedText" role="status">Este perfil solo se guarda en este dispositivo.</small>
       </form>
 
+      <section class="level-card" aria-label="Nivel y experiencia">
+        <div class="level-card-top">
+          <div><span class="section-kicker">TU RANGO ACTUAL</span><h3 id="profileRank">🚦 Aprendiz del Volante</h3></div>
+          <strong id="profileLevel">Nivel 1</strong>
+        </div>
+        <div class="level-xp-row"><span>Experiencia</span><strong id="profileXP">0 / 100 XP</strong></div>
+        <div class="level-progress-track"><span id="levelProgressFill"></span></div>
+        <small id="levelProgressCaption">Siguiente rango: 🚚 Conductor Novato</small>
+        <p class="level-rule">XP por respuestas correctas y recompensas de logros. Los supuestos prácticos y los logros raros conceden más experiencia.</p>
+      </section>
+
       <div class="profile-stats-grid">
         <article class="profile-stat"><span>🎮 Tests realizados</span><strong id="profileTests">0</strong></article>
         <article class="profile-stat"><span>📝 Preguntas contestadas</span><strong id="profileAnswered">0</strong></article>
@@ -117,6 +139,23 @@
         <article class="profile-stat"><span>❌ Fallos totales</span><strong id="profileWrong">0</strong></article>
       </div>
 
+      <section class="practical-stats-section" aria-label="Estadísticas de supuestos prácticos">
+        <div class="history-heading"><div><span class="section-kicker">RENDIMIENTO ESPECÍFICO</span><h3>Supuestos prácticos</h3></div></div>
+        <div class="profile-stats-grid practical-stats-grid">
+          <article class="profile-stat"><span>📋 Tests de supuestos</span><strong id="profilePracticalTests">0</strong></article>
+          <article class="profile-stat"><span>📝 Supuestos contestados</span><strong id="profilePracticalAnswered">0</strong></article>
+          <article class="profile-stat"><span>✅ Aciertos</span><strong id="profilePracticalCorrect">0</strong></article>
+          <article class="profile-stat"><span>❌ Fallos</span><strong id="profilePracticalWrong">0</strong></article>
+          <article class="profile-stat"><span>🎯 Precisión</span><strong id="profilePracticalAccuracy">0%</strong></article>
+          <article class="profile-stat"><span>🔥 Mejor racha</span><strong id="profilePracticalStreak">0</strong></article>
+        </div>
+      </section>
+
+      <section class="achievements-section" aria-label="Colección de logros">
+        <div class="history-heading achievements-heading"><div><span class="section-kicker">TUS DESAFÍOS</span><h3>Colección de logros</h3></div><span class="history-count" id="achievementCount">0 logros</span></div>
+        <div id="achievementsList" class="achievements-list"></div>
+      </section>
+
       <div class="history-section">
         <div class="history-heading"><div><span class="section-kicker">TUS ÚLTIMAS PARTIDAS</span><h3>Historial de tests</h3></div><span class="history-count" id="historyCount">0 tests</span></div>
         <div id="historyList" class="history-list">
@@ -125,22 +164,6 @@
       </div>
     </section>
 
-    <!-- CRÉDITOS -->
-    <section class="game-subscreen card" id="creditsScreen" hidden aria-label="Créditos">
-      <div class="subscreen-heading">
-        <div><span class="section-kicker">ACERCA DEL JUEGO</span><h2>Créditos</h2></div>
-        <button class="secondary back-menu-btn" type="button" data-back-menu>← Menú</button>
-      </div>
-      <div class="credits-panel">
-        <div class="credits-emblem" aria-hidden="true">🔥</div>
-        <h3>Test título de transportista</h3>
-        <p>Una herramienta de práctica para preparar el examen de título de transportista mediante preguntas tipo test y supuestos prácticos.</p>
-        <div class="credits-divider"></div>
-        <p><strong>Contenido:</strong> banco de preguntas local proporcionado para la aplicación.</p>
-        <p><strong>Progreso:</strong> estadísticas e historial almacenados en el navegador de este dispositivo.</p>
-        <small>Versión de la experiencia: 5.0</small>
-      </div>
-    </section>
 
     <!-- CONFIGURACIÓN DEL TEST Y TEST EN CURSO -->
     <section class="card setup-screen" id="setupScreen" hidden aria-label="Configuración y test">
@@ -201,6 +224,15 @@
       </div>
 
       <section id="testArea" class="test-area" style="display:none;" aria-label="Test en curso">
+        <div class="test-player-hud" id="testPlayerHUD" aria-label="Perfil y progreso del jugador durante el test">
+          <div class="test-hud-avatar" aria-hidden="true">🏁</div>
+          <div class="test-hud-main">
+            <div class="test-hud-name-row"><strong id="testHUDName">Jugador</strong><span id="testHUDLevel">NV. 1</span></div>
+            <small id="testHUDRank">🚦 Aprendiz del Volante</small>
+            <div class="test-hud-track"><span id="testHUDProgress"></span></div>
+            <small class="test-hud-xp" id="testHUDXP">0 / 100 XP</small>
+          </div>
+        </div>
         <div class="quiz-toolbar">
           <span class="mode-badge practice" id="modeBadge">MODO PRÁCTICA</span>
           <span class="question-position" id="questionPosition">Pregunta 1 / 0</span>
@@ -254,6 +286,19 @@
     </section>
   </main>
 
+  <div class="level-up-overlay" id="levelUpOverlay" hidden role="dialog" aria-modal="true" aria-label="Subida de nivel">
+    <div class="level-up-burst" aria-hidden="true"></div>
+    <div class="level-up-panel">
+      <div class="level-up-rays" aria-hidden="true">✦ ✧ ✦</div>
+      <span class="level-up-eyebrow">ASCENSIÓN DESBLOQUEADA</span>
+      <div class="level-up-emblem" aria-hidden="true">🏆</div>
+      <span class="level-up-old" id="levelUpOld">NIVEL 1</span>
+      <div class="level-up-title">¡LEVEL UP!</div>
+      <strong class="level-up-new" id="levelUpNew">NIVEL 2</strong>
+      <div class="level-up-rank" id="levelUpRank">🚚 Conductor Novato</div>
+      <p>Tu experiencia en carretera sigue creciendo.</p>
+    </div>
+  </div>
   <div class="streak-toast" id="streakToast" role="status" aria-live="polite"></div>
   <div class="screen-fx" id="screenFX" aria-hidden="true"></div>
   <nav class="mobile-dock" id="mobileDock" aria-label="Navegación del test" hidden>

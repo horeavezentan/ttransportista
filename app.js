@@ -10,7 +10,30 @@ let testFinished = false;
 
 const PROFILE_STORAGE_KEY = 'transportista_player_profile_v1';
 const SETTINGS_STORAGE_KEY = 'transportista_player_settings_v1';
-const APP_SCREENS = ['mainMenu', 'setupScreen', 'optionsScreen', 'profileScreen', 'creditsScreen'];
+const APP_SCREENS = ['mainMenu', 'setupScreen', 'optionsScreen', 'profileScreen'];
+
+const PLAYER_RANKS = [
+  { title: '🚦 Aprendiz del Volante' },
+  { title: '🚚 Conductor Novato' },
+  { title: '📦 Transportista' },
+  { title: '🚛 Conductor Profesional' },
+  { title: '🚛 Transportista Experimentado' },
+  { title: '🔧 Especialista del Transporte' },
+  { title: '🏅 Maestro del Volante' },
+  { title: '🦅 Capitán de Carretera' },
+  { title: '👑 Jefe de Flota' },
+  { title: '🏆 Director de Transporte' },
+  { title: '⚡ Comandante Logístico' },
+  { title: '🔥 Señor de las Carreteras' },
+  { title: '💎 Magnate del Transporte' },
+  { title: '🐉 Leyenda del Transporte' },
+  { title: '🌍 Emperador de las Carreteras' }
+];
+const XP_PER_CORRECT_ANSWER = 1;
+const LEGACY_XP_PER_CORRECT_ANSWER = 1;
+const XP_LEVEL_BASE = 100;
+const XP_LEVEL_GROWTH = 1.35;
+const ACHIEVEMENT_RARITIES = ['Común', 'Poco común', 'Raro', 'Épico', 'Legendario'];
 
 function defaultPlayerProfile() {
   return {
@@ -19,7 +42,20 @@ function defaultPlayerProfile() {
     totalQuestionsAnswered: 0,
     totalCorrect: 0,
     totalWrong: 0,
+    practicalTestsCompleted: 0,
+    practicalQuestionsAnswered: 0,
+    practicalCorrect: 0,
+    practicalWrong: 0,
+    practicalBestStreak: 0,
     bestStreak: 0,
+    bestComebackStreak: 0,
+    totalXP: 0,
+    masteredQuestionIds: [],
+    questionCorrectCounts: {},
+    unlockedAchievements: [],
+    achievementXPClaimed: [],
+    perfectTestsStreak: 0,
+    practiceDates: [],
     history: []
   };
 }
@@ -38,7 +74,20 @@ function loadPlayerProfile() {
       totalQuestionsAnswered: Math.max(0, Number(parsed.totalQuestionsAnswered) || 0),
       totalCorrect: Math.max(0, Number(parsed.totalCorrect) || 0),
       totalWrong: Math.max(0, Number(parsed.totalWrong) || 0),
+      practicalTestsCompleted: Math.max(0, Number(parsed.practicalTestsCompleted !== undefined ? parsed.practicalTestsCompleted : (Array.isArray(parsed.history) ? parsed.history.filter(function(x){return x.type === 'supuestos';}).length : 0)) || 0),
+      practicalQuestionsAnswered: Math.max(0, Number(parsed.practicalQuestionsAnswered !== undefined ? parsed.practicalQuestionsAnswered : (Array.isArray(parsed.history) ? parsed.history.filter(function(x){return x.type === 'supuestos';}).reduce(function(n,x){return n + (Number(x.answered)||0);},0) : 0)) || 0),
+      practicalCorrect: Math.max(0, Number(parsed.practicalCorrect !== undefined ? parsed.practicalCorrect : (Array.isArray(parsed.history) ? parsed.history.filter(function(x){return x.type === 'supuestos';}).reduce(function(n,x){return n + (Number(x.correct)||0);},0) : 0)) || 0),
+      practicalWrong: Math.max(0, Number(parsed.practicalWrong !== undefined ? parsed.practicalWrong : (Array.isArray(parsed.history) ? parsed.history.filter(function(x){return x.type === 'supuestos';}).reduce(function(n,x){return n + (Number(x.wrong)||0);},0) : 0)) || 0),
+      practicalBestStreak: Math.max(0, Number(parsed.practicalBestStreak !== undefined ? parsed.practicalBestStreak : (Array.isArray(parsed.history) ? parsed.history.filter(function(x){return x.type === 'supuestos';}).reduce(function(n,x){return Math.max(n, Number(x.bestStreak)||0);},0) : 0)) || 0),
       bestStreak: Math.max(0, Number(parsed.bestStreak) || 0),
+      bestComebackStreak: Math.max(0, Number(parsed.bestComebackStreak) || 0),
+      totalXP: Math.max(0, Math.floor(parsed.totalXP !== undefined ? (Number(parsed.totalXP) || 0) : ((Number(parsed.totalCorrect) || 0) * XP_PER_CORRECT_ANSWER))),
+      masteredQuestionIds: Array.isArray(parsed.masteredQuestionIds) ? parsed.masteredQuestionIds : [],
+      questionCorrectCounts: parsed.questionCorrectCounts && typeof parsed.questionCorrectCounts === 'object' ? parsed.questionCorrectCounts : {},
+      unlockedAchievements: Array.isArray(parsed.unlockedAchievements) ? parsed.unlockedAchievements : [],
+      achievementXPClaimed: Array.isArray(parsed.achievementXPClaimed) ? parsed.achievementXPClaimed : [],
+      perfectTestsStreak: Math.max(0, Number(parsed.perfectTestsStreak) || 0),
+      practiceDates: Array.isArray(parsed.practiceDates) ? parsed.practiceDates : [],
       history: Array.isArray(parsed.history) ? parsed.history.slice(0, 40) : []
     };
   } catch (error) {
@@ -48,7 +97,7 @@ function loadPlayerProfile() {
 }
 
 function defaultPlayerSettings() {
-  return { effectsEnabled: true, fireIntensity: 'apocalipsis', reducedMotion: false };
+  return { effectsEnabled: true, fireIntensity: 'apocalipsis', reducedMotion: false, shakeEnabled: true, shakeMaxDistance: 2, shakeBaseDuration: 1000 };
 }
 
 function loadPlayerSettings() {
@@ -59,7 +108,10 @@ function loadPlayerSettings() {
     return {
       effectsEnabled: parsed.effectsEnabled !== false,
       fireIntensity: ['fuerte', 'inferno', 'apocalipsis'].indexOf(parsed.fireIntensity) !== -1 ? parsed.fireIntensity : 'apocalipsis',
-      reducedMotion: parsed.reducedMotion === true
+      reducedMotion: parsed.reducedMotion === true,
+      shakeEnabled: parsed.shakeEnabled !== false,
+      shakeMaxDistance: Math.min(2, Math.max(0.5, Number(parsed.shakeMaxDistance) || 2)),
+      shakeBaseDuration: Math.min(1000, Math.max(100, Number(parsed.shakeBaseDuration) || 1000))
     };
   } catch (error) {
     console.warn('No se pudieron leer las opciones locales:', error);
@@ -99,9 +151,19 @@ function applyPlayerSettings() {
   const effects = document.getElementById('effectsEnabled');
   const intensity = document.getElementById('fireIntensitySelect');
   const reduced = document.getElementById('reducedMotionToggle');
+  const shake = document.getElementById('shakeEnabled');
+  const shakeDistance = document.getElementById('shakeMaxDistance');
+  const shakeDuration = document.getElementById('shakeBaseDuration');
+  const shakeDistanceValue = document.getElementById('shakeMaxDistanceValue');
+  const shakeDurationValue = document.getElementById('shakeBaseDurationValue');
   if (effects) effects.checked = !!playerSettings.effectsEnabled;
   if (intensity) intensity.value = playerSettings.fireIntensity || 'apocalipsis';
   if (reduced) reduced.checked = !!playerSettings.reducedMotion;
+  if (shake) shake.checked = !!playerSettings.shakeEnabled;
+  if (shakeDistance) shakeDistance.value = String(playerSettings.shakeMaxDistance);
+  if (shakeDuration) shakeDuration.value = String(playerSettings.shakeBaseDuration);
+  if (shakeDistanceValue) shakeDistanceValue.textContent = Number(playerSettings.shakeMaxDistance).toFixed(1) + ' px';
+  if (shakeDurationValue) shakeDurationValue.textContent = playerSettings.shakeBaseDuration + ' ms';
 }
 
 function showAppScreen(screenId) {
@@ -139,6 +201,28 @@ function calculateBestStreak(questions, answers) {
   return best;
 }
 
+function calculateBestComebackStreak(questions, answers) {
+  let wrongRun = 0;
+  let current = 0;
+  let best = 0;
+  let comebackArmed = false;
+  questions.forEach(function(question, index) {
+    const answer = answers[index];
+    if (!answer || answer !== question.correct) {
+      wrongRun++;
+      current = 0;
+      if (wrongRun >= 3) comebackArmed = true;
+      return;
+    }
+    wrongRun = 0;
+    if (comebackArmed) {
+      current++;
+      best = Math.max(best, current);
+    }
+  });
+  return best;
+}
+
 function getSessionTitle() {
   const mode = document.getElementById('modeSelect').value;
   const type = currentTestType() === 'supuestos' ? 'Supuestos prácticos' : 'Preguntas tipo test';
@@ -157,11 +241,342 @@ function getSessionTitle() {
   return count + ' preguntas · ' + type;
 }
 
+function getTotalBankQuestionCount() {
+  return (Array.isArray(ALL_QUESTIONS) ? ALL_QUESTIONS.length : 0) + (Array.isArray(ALL_SUPUESTOS) ? ALL_SUPUESTOS.length : 0);
+}
+
+// Las preguntas tipo test y los supuestos representan aproximadamente el 50 %
+// del examen cada uno. Se concede 1 XP por pregunta objetiva y una cantidad
+// proporcionalmente mayor por supuesto, calculada según el tamaño de ambos bancos.
+function getXPForQuestionType(type) {
+  if (type === 'supuestos') {
+    const objectiveCount = Array.isArray(ALL_QUESTIONS) ? ALL_QUESTIONS.length : 0;
+    const practicalCount = Array.isArray(ALL_SUPUESTOS) ? ALL_SUPUESTOS.length : 0;
+    return practicalCount > 0 ? Math.max(2, Math.round(objectiveCount / practicalCount)) : 2;
+  }
+  return XP_PER_CORRECT_ANSWER;
+}
+
+// El objetivo de XP equivale a acertar todo el banco dos veces con la
+// ponderación 50/50 entre preguntas objetivas y supuestos prácticos.
+function getAchievementXPForRarity(rarity) {
+  return ({ 'Común': 10, 'Poco común': 20, 'Raro': 40, 'Épico': 70, 'Legendario': 100 })[rarity] || 10;
+}
+
+function getXPForMaximumLevel() {
+  const objectiveCount = Array.isArray(ALL_QUESTIONS) ? ALL_QUESTIONS.length : 0;
+  const practicalCount = Array.isArray(ALL_SUPUESTOS) ? ALL_SUPUESTOS.length : 0;
+  const questionXP = 2 * (objectiveCount * getXPForQuestionType('objetivas') + practicalCount * getXPForQuestionType('supuestos'));
+  const achievementXP = getAchievementDefinitions().reduce(function(sum, item) { return sum + getAchievementXPForRarity(item.rarity); }, 0);
+  return Math.max(1, questionXP + achievementXP);
+}
+
+function xpRequiredForLevel(level) {
+  const maxLevel = PLAYER_RANKS.length;
+  const targetTotal = getXPForMaximumLevel();
+  const weights = [];
+  let weightTotal = 0;
+  for (let i = 1; i < maxLevel; i++) {
+    const weight = Math.pow(XP_LEVEL_GROWTH, i - 1);
+    weights.push(weight);
+    weightTotal += weight;
+  }
+  const safeLevel = Math.max(1, Math.min(maxLevel - 1, Math.floor(level)));
+  const cumulativeWeight = weights.slice(0, safeLevel).reduce((sum, value) => sum + value, 0);
+  const previousWeight = weights.slice(0, safeLevel - 1).reduce((sum, value) => sum + value, 0);
+  const cumulativeXP = Math.round(targetTotal * cumulativeWeight / weightTotal);
+  const previousXP = Math.round(targetTotal * previousWeight / weightTotal);
+  return Math.max(1, cumulativeXP - previousXP);
+}
+
+function getXPPerCorrectAnswer() {
+  return XP_PER_CORRECT_ANSWER;
+}
+
+function getPlayerLevelInfo(totalXP) {
+  let level = 1;
+  let remainingXP = Math.max(0, Number(totalXP) || 0);
+  while (level < PLAYER_RANKS.length) {
+    const required = xpRequiredForLevel(level);
+    if (remainingXP < required) break;
+    remainingXP -= required;
+    level++;
+  }
+  const requiredForNext = level < PLAYER_RANKS.length ? xpRequiredForLevel(level) : 0;
+  return {
+    level: level,
+    rank: PLAYER_RANKS[level - 1],
+    currentXP: remainingXP,
+    requiredXP: requiredForNext,
+    progress: requiredForNext ? Math.min(100, Math.round((remainingXP / requiredForNext) * 100)) : 100,
+    maxLevel: level === PLAYER_RANKS.length
+  };
+}
+
+function questionProgressId(question, type) {
+  return (type || currentTestType()) + ':' + String(question.code || question.topic || question.question);
+}
+
+function getThemeGroups() {
+  const groups = {};
+  [['objetivas', ALL_QUESTIONS], ['supuestos', ALL_SUPUESTOS]].forEach(function(entry) {
+    entry[1].forEach(function(question) {
+      const match = String(question.topic || '').match(/^1([A-H])/);
+      if (!match) return;
+      const key = match[1];
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(questionProgressId(question, entry[0]));
+    });
+  });
+  return groups;
+}
+
+function getAchievementDefinitions() {
+  const answered = playerProfile.totalQuestionsAnswered;
+  const correct = playerProfile.totalCorrect;
+  const accuracy = answered ? correct / answered * 100 : 0;
+  const history = playerProfile.history || [];
+  const bestTestAccuracy = history.reduce(function(best, item) {
+    return Math.max(best, Number(item.accuracyPct) || 0);
+  }, 0);
+  const groups = getThemeGroups();
+  const practicalCount = Array.isArray(ALL_SUPUESTOS) ? ALL_SUPUESTOS.length : 0;
+  const mastered = new Set(playerProfile.masteredQuestionIds || []);
+  const topicAchievements = Object.keys(groups).sort().map(function(letter) {
+    const ids = groups[letter];
+    const done = ids.filter(function(id) { return mastered.has(id); }).length;
+    return {
+      id: 'theme-' + letter,
+      category: 'Dominio de temas',
+      title: 'Tema ' + letter + ' completado',
+      description: 'Acertar todas las preguntas de todos los subtemas del tema ' + letter + ', incluidos sus supuestos prácticos.',
+      icon: '📚', rarity: 'Legendario', progress: done, target: ids.length,
+      unlocked: ids.length > 0 && done === ids.length
+    };
+  });
+  const definitions = [
+    { id:'first-test', category:'Primeros pasos', title:'Primer viaje', description:'Completa tu primer test.', icon:'🚛', rarity:'Común', progress:playerProfile.testsCompleted, target:1, unlocked:playerProfile.testsCompleted>=1 },
+    { id:'ten-answered', category:'Primeros pasos', title:'Arrancando motores', description:'Responde 10 preguntas.', icon:'🔑', rarity:'Común', progress:answered, target:10, unlocked:answered>=10 },
+    { id:'fifty-answered', category:'Primeros pasos', title:'En ruta', description:'Responde 50 preguntas.', icon:'🛣️', rarity:'Poco común', progress:answered, target:50, unlocked:answered>=50 },
+    { id:'hundred-answered', category:'Primeros pasos', title:'Kilómetro 100', description:'Responde 100 preguntas.', icon:'📍', rarity:'Poco común', progress:answered, target:100, unlocked:answered>=100 },
+    { id:'first-pass', category:'Primeros pasos', title:'Primer destino', description:'Aprueba tu primer test.', icon:'🏁', rarity:'Poco común', progress:history.filter(function(x){return x.passed;}).length, target:1, unlocked:history.some(function(x){return x.passed;}) },
+
+    { id:'five-tests', category:'Dominio del transporte', title:'Estudiante de carretera', description:'Completa 5 tests.', icon:'📘', rarity:'Común', progress:playerProfile.testsCompleted, target:5, unlocked:playerProfile.testsCompleted>=5 },
+    { id:'ten-tests', category:'Dominio del transporte', title:'Profesional del volante', description:'Completa 10 tests.', icon:'🎓', rarity:'Poco común', progress:playerProfile.testsCompleted, target:10, unlocked:playerProfile.testsCompleted>=10 },
+    { id:'hundred-correct', category:'Dominio del transporte', title:'Cerebro logístico', description:'Acumula 100 respuestas correctas.', icon:'🧠', rarity:'Raro', progress:correct, target:100, unlocked:correct>=100 },
+    { id:'five-hundred-correct', category:'Dominio del transporte', title:'Experto en transporte', description:'Acumula 500 respuestas correctas.', icon:'🏆', rarity:'Épico', progress:correct, target:500, unlocked:correct>=500 },
+    { id:'thousand-correct', category:'Dominio del transporte', title:'Maestro del transporte', description:'Acumula 1.000 respuestas correctas.', icon:'👑', rarity:'Legendario', progress:correct, target:1000, unlocked:correct>=1000 },
+
+    { id:'accuracy-70', category:'Precisión y perfección', title:'Buena puntería', description:'Alcanza un 70 % de aciertos global.', icon:'🎯', rarity:'Poco común', progress:Math.round(accuracy), target:70, suffix:'%', unlocked:answered>0 && accuracy>=70 },
+    { id:'accuracy-90', category:'Precisión y perfección', title:'Precisión profesional', description:'Alcanza un 90 % de aciertos global.', icon:'💯', rarity:'Épico', progress:Math.round(accuracy), target:90, suffix:'%', unlocked:answered>0 && accuracy>=90 },
+    { id:'perfect-test', category:'Precisión y perfección', title:'Matrícula de honor', description:'Consigue un 100 % en un test completo.', icon:'🥇', rarity:'Épico', progress:bestTestAccuracy, target:100, suffix:'%', unlocked:history.some(function(x){return x.accuracyPct===100 && x.blank===0;}) },
+    { id:'twenty-clean', category:'Precisión y perfección', title:'Sin errores', description:'Consigue 20 respuestas correctas seguidas.', icon:'💎', rarity:'Épico', progress:playerProfile.bestStreak, target:20, unlocked:playerProfile.bestStreak>=20 },
+    { id:'five-perfect-tests', category:'Precisión y perfección', title:'Examen perfecto', description:'Aprueba 5 tests consecutivos con el 100 %.', icon:'🏅', rarity:'Legendario', progress:playerProfile.perfectTestsStreak, target:5, unlocked:playerProfile.perfectTestsStreak>=5 },
+
+    { id:'streak-five', category:'Rachas', title:'Motor caliente', description:'Consigue 5 respuestas correctas seguidas.', icon:'🔥', rarity:'Común', progress:playerProfile.bestStreak, target:5, unlocked:playerProfile.bestStreak>=5 },
+    { id:'streak-ten', category:'Rachas', title:'Motor al rojo vivo', description:'Consigue 10 respuestas correctas seguidas.', icon:'🔥', rarity:'Raro', progress:playerProfile.bestStreak, target:10, unlocked:playerProfile.bestStreak>=10 },
+    { id:'streak-twenty', category:'Rachas', title:'Fuego en carretera', description:'Consigue 20 respuestas correctas seguidas.', icon:'🔥', rarity:'Épico', progress:playerProfile.bestStreak, target:20, unlocked:playerProfile.bestStreak>=20 },
+    { id:'streak-thirty', category:'Rachas', title:'Imparable', description:'Consigue una racha de 30 aciertos.', icon:'⚡', rarity:'Legendario', progress:playerProfile.bestStreak, target:30, unlocked:playerProfile.bestStreak>=30 },
+    { id:'cold-blood', category:'Rachas', title:'Sangre fría', description:'Tras 3 respuestas incorrectas, consigue 5 aciertos seguidos.', icon:'❄️', rarity:'Épico', progress:playerProfile.bestComebackStreak, target:5, unlocked:playerProfile.bestComebackStreak>=5 },
+
+    { id:'morning-driver', category:'Constancia', title:'Madrugador', description:'Completa un test antes de las 8:00.', icon:'🌅', rarity:'Poco común', progress:playerProfile.earlyBird?1:0, target:1, unlocked:!!playerProfile.earlyBird },
+    { id:'night-shift', category:'Constancia', title:'Turno nocturno', description:'Completa un test después de las 22:00.', icon:'🌙', rarity:'Poco común', progress:playerProfile.nightOwl?1:0, target:1, unlocked:!!playerProfile.nightOwl },
+    { id:'seven-days', category:'Constancia', title:'Semana en ruta', description:'Practica en 7 días diferentes.', icon:'📅', rarity:'Raro', progress:playerProfile.practiceDates.length, target:7, unlocked:playerProfile.practiceDates.length>=7 },
+    { id:'thirty-days', category:'Constancia', title:'Transportista constante', description:'Practica en 30 días diferentes.', icon:'🗓️', rarity:'Legendario', progress:playerProfile.practiceDates.length, target:30, unlocked:playerProfile.practiceDates.length>=30 },
+    { id:'ten-completed', category:'Constancia', title:'Sin abandonar', description:'Completa 10 tests.', icon:'🧱', rarity:'Épico', progress:playerProfile.testsCompleted, target:10, unlocked:playerProfile.testsCompleted>=10 },
+
+    { id:'practical-first', category:'Supuestos prácticos', title:'Primer caso resuelto', description:'Completa tu primer test de supuestos prácticos.', icon:'📋', rarity:'Común', progress:playerProfile.practicalTestsCompleted, target:1, unlocked:playerProfile.practicalTestsCompleted>=1 },
+    { id:'practical-ten', category:'Supuestos prácticos', title:'Analista en prácticas', description:'Acumula 10 respuestas correctas en supuestos prácticos.', icon:'🧩', rarity:'Común', progress:playerProfile.practicalCorrect, target:10, unlocked:playerProfile.practicalCorrect>=10 },
+    { id:'practical-fifty', category:'Supuestos prácticos', title:'Resolutor de casos', description:'Acumula 50 respuestas correctas en supuestos prácticos.', icon:'📝', rarity:'Poco común', progress:playerProfile.practicalCorrect, target:50, unlocked:playerProfile.practicalCorrect>=50 },
+    { id:'practical-hundred', category:'Supuestos prácticos', title:'Especialista práctico', description:'Acumula 100 respuestas correctas en supuestos prácticos.', icon:'🔍', rarity:'Raro', progress:playerProfile.practicalCorrect, target:100, unlocked:playerProfile.practicalCorrect>=100 },
+    { id:'practical-two-fifty', category:'Supuestos prácticos', title:'Experto en escenarios', description:'Acumula 250 respuestas correctas en supuestos prácticos.', icon:'🧠', rarity:'Épico', progress:playerProfile.practicalCorrect, target:250, unlocked:playerProfile.practicalCorrect>=250 },
+    { id:'practical-five-hundred', category:'Supuestos prácticos', title:'Maestro de los supuestos', description:'Acumula 500 respuestas correctas en supuestos prácticos.', icon:'🏆', rarity:'Legendario', progress:playerProfile.practicalCorrect, target:500, unlocked:playerProfile.practicalCorrect>=500 },
+    { id:'practical-accuracy-80', category:'Supuestos prácticos', title:'Buen criterio', description:'Alcanza un 80 % de acierto en supuestos prácticos.', icon:'🎯', rarity:'Raro', progress:playerProfile.practicalQuestionsAnswered ? Math.round(playerProfile.practicalCorrect / playerProfile.practicalQuestionsAnswered * 100) : 0, target:80, suffix:'%', unlocked:playerProfile.practicalQuestionsAnswered>0 && playerProfile.practicalCorrect / playerProfile.practicalQuestionsAnswered >= 0.8 },
+    { id:'practical-perfect', category:'Supuestos prácticos', title:'Caso impecable', description:'Completa un test de supuestos prácticos sin fallos ni respuestas en blanco.', icon:'💎', rarity:'Épico', progress:history.filter(function(x){return x.type==='supuestos' && x.accuracyPct===100 && x.blank===0;}).length, target:1, unlocked:history.some(function(x){return x.type==='supuestos' && x.accuracyPct===100 && x.blank===0;}) },
+    { id:'practical-streak-ten', category:'Supuestos prácticos', title:'Cadena de razonamiento', description:'Consigue 10 supuestos prácticos correctos seguidos.', icon:'🔗', rarity:'Épico', progress:playerProfile.practicalBestStreak, target:10, unlocked:playerProfile.practicalBestStreak>=10 },
+    { id:'practical-all-mastered', category:'Supuestos prácticos', title:'Dominio de los casos', description:'Acierta todas las preguntas del banco de supuestos prácticos al menos una vez.', icon:'👑', rarity:'Legendario', progress:(playerProfile.masteredQuestionIds || []).filter(function(id){return id.indexOf('supuestos:')===0;}).length, target:practicalCount, unlocked:practicalCount>0 && (playerProfile.masteredQuestionIds || []).filter(function(id){return id.indexOf('supuestos:')===0;}).length>=practicalCount },
+    { id:'secret-perfect-marathon', category:'Secretos', title:'Ruta impecable', description:'Completa un test de al menos 50 preguntas con el 100 % de aciertos.', icon:'🛣️', rarity:'Legendario', progress:0, target:1, unlocked:history.some(function(x){return x.totalQuestions>=50 && x.accuracyPct===100 && x.blank===0;}), secret:true },
+    { id:'secret-long-haul', category:'Secretos', title:'Kilómetro infinito', description:'Completa 100 preguntas en una sola sesión.', icon:'♾️', rarity:'Épico', progress:0, target:1, unlocked:history.some(function(x){return x.totalQuestions>=100 && x.answered>=100;}), secret:true },
+    { id:'secret-shift-change', category:'Secretos', title:'Cambio de turno', description:'Completa un test antes de las 8:00 y otro después de las 22:00.', icon:'🌗', rarity:'Raro', progress:0, target:1, unlocked:!!playerProfile.earlyBird && !!playerProfile.nightOwl, secret:true }
+  ];
+  return definitions.concat(topicAchievements);
+}
+
+function checkAndUnlockAchievements() {
+  const definitions = getAchievementDefinitions();
+  const newlyUnlocked = [];
+  const newlyPaid = [];
+  definitions.forEach(function(item) {
+    if (!item.unlocked) return;
+    if (playerProfile.unlockedAchievements.indexOf(item.id) === -1) {
+      playerProfile.unlockedAchievements.push(item.id);
+      newlyUnlocked.push(item);
+    }
+    if (playerProfile.achievementXPClaimed.indexOf(item.id) === -1) {
+      const reward = getAchievementXPForRarity(item.rarity);
+      playerProfile.totalXP = Math.floor(playerProfile.totalXP) + reward;
+      playerProfile.achievementXPClaimed.push(item.id);
+      newlyPaid.push({ item: item, reward: reward });
+    }
+  });
+  if (newlyUnlocked.length || newlyPaid.length) {
+    savePlayerProfile();
+    newlyPaid.forEach(function(entry, index) {
+      window.setTimeout(function() {
+        const prefix = newlyUnlocked.some(function(item) { return item.id === entry.item.id; }) ? '🏅 LOGRO DESBLOQUEADO' : '🏅 RECOMPENSA DE LOGRO';
+        showEffectToast(prefix + ' · ' + entry.item.title + ' · +' + entry.reward + ' XP', 'fire');
+      }, index * 1800);
+    });
+  }
+  return newlyUnlocked;
+}
+
+function awardCorrectQuestion(question, type, silent, deferSave, streakMultiplier) {
+  const id = questionProgressId(question, type);
+  const previousCount = Math.max(0, Number(playerProfile.questionCorrectCounts[id]) || 0);
+  if (previousCount >= 2) return 0;
+  const previousLevel = getPlayerLevelInfo(playerProfile.totalXP).level;
+  playerProfile.questionCorrectCounts[id] = previousCount + 1;
+  if (playerProfile.masteredQuestionIds.indexOf(id) === -1) playerProfile.masteredQuestionIds.push(id);
+  // Cada supuesto vale más XP que una pregunta objetiva. El banco completo
+  // mantiene el objetivo: alcanzar el nivel 15 tras acertarlo dos veces.
+  const xpValue = getXPForQuestionType(type);
+  const earnedXP = Math.min(xpValue, Math.max(0, getXPForMaximumLevel() - playerProfile.totalXP));
+  playerProfile.totalXP = Math.floor(playerProfile.totalXP) + earnedXP;
+  const nextLevel = getPlayerLevelInfo(playerProfile.totalXP).level;
+  if (!deferSave) savePlayerProfile();
+  if (!silent) {
+    if (nextLevel > previousLevel) {
+      showLevelUpAnimation(previousLevel, nextLevel);
+    } else {
+      showEffectToast('+' + Math.round(earnedXP) + ' XP' + (type === 'supuestos' ? ' · SUPUESTO' : ' · TEST'), 'fire');
+    }
+  }
+  if (!deferSave) checkAndUnlockAchievements();
+  if (!deferSave) {
+    if (!document.getElementById('profileScreen').hidden) renderProfileScreen();
+    renderMainMenu();
+    updateInTestPlayerHUD();
+  }
+  return earnedXP;
+}
+
+function showLevelUpAnimation(previousLevel, nextLevel) {
+  const overlay = document.getElementById('levelUpOverlay');
+  if (!overlay) return;
+  const info = getPlayerLevelInfo(playerProfile.totalXP);
+  document.getElementById('levelUpOld').textContent = 'NIVEL ' + previousLevel;
+  document.getElementById('levelUpNew').textContent = 'NIVEL ' + nextLevel;
+  document.getElementById('levelUpRank').textContent = info.rank.title;
+  overlay.hidden = false;
+  overlay.classList.remove('level-up-show');
+  void overlay.offsetWidth;
+  overlay.classList.add('level-up-show');
+  updateInTestPlayerHUD();
+  window.clearTimeout(showLevelUpAnimation.timer);
+  showLevelUpAnimation.timer = window.setTimeout(function() {
+    overlay.classList.remove('level-up-show');
+    overlay.hidden = true;
+  }, 4400);
+}
+
+function updateInTestPlayerHUD() {
+  const hud = document.getElementById('testPlayerHUD');
+  if (!hud) return;
+  const info = getPlayerLevelInfo(playerProfile.totalXP);
+  const name = document.getElementById('testHUDName');
+  const rank = document.getElementById('testHUDRank');
+  const level = document.getElementById('testHUDLevel');
+  const xp = document.getElementById('testHUDXP');
+  const fill = document.getElementById('testHUDProgress');
+  if (name) name.textContent = playerProfile.name || 'Jugador';
+  if (rank) rank.textContent = info.rank.title;
+  if (level) level.textContent = 'NV. ' + info.level;
+  if (xp) xp.textContent = info.maxLevel ? 'NIVEL MÁXIMO' : Math.floor(info.currentXP) + ' / ' + info.requiredXP + ' XP';
+  if (fill) fill.style.width = info.progress + '%';
+}
+
+function renderLevelProgress() {
+  const info = getPlayerLevelInfo(playerProfile.totalXP);
+  const rankEl = document.getElementById('profileRank');
+  const levelEl = document.getElementById('profileLevel');
+  const xpEl = document.getElementById('profileXP');
+  const fill = document.getElementById('levelProgressFill');
+  const caption = document.getElementById('levelProgressCaption');
+  if (!rankEl) return;
+  rankEl.textContent = info.rank.title;
+  levelEl.textContent = 'Nivel ' + info.level;
+  xpEl.textContent = info.maxLevel ? Math.floor(playerProfile.totalXP) + ' XP · Rango máximo' : Math.floor(info.currentXP) + ' / ' + info.requiredXP + ' XP';
+  fill.style.width = info.progress + '%';
+  caption.textContent = info.maxLevel ? 'Has alcanzado el rango máximo.' : 'Siguiente rango: ' + PLAYER_RANKS[info.level].title;
+}
+
+function renderAchievements() {
+  const container = document.getElementById('achievementsList');
+  if (!container) return;
+  const definitions = getAchievementDefinitions();
+  const unlocked = new Set(playerProfile.unlockedAchievements);
+  const categories = ['Primeros pasos', 'Dominio del transporte', 'Precisión y perfección', 'Rachas', 'Constancia', 'Supuestos prácticos', 'Dominio de temas', 'Secretos'];
+  container.innerHTML = '';
+  categories.forEach(function(category) {
+    const items = definitions.filter(function(item) { return item.category === category; });
+    if (!items.length) return;
+    const section = document.createElement('section');
+    section.className = 'achievement-category';
+    const heading = document.createElement('h4');
+    heading.textContent = category;
+    section.appendChild(heading);
+    const grid = document.createElement('div');
+    grid.className = 'achievement-grid';
+    items.forEach(function(item) {
+      const isUnlocked = unlocked.has(item.id);
+      const card = document.createElement('article');
+      card.className = 'achievement-card rarity-' + item.rarity.toLowerCase().replace(/\s+/g, '-');
+      card.classList.toggle('is-unlocked', isUnlocked);
+      const icon = document.createElement('span');
+      icon.className = 'achievement-icon';
+      icon.textContent = isUnlocked ? item.icon : '🔒';
+      const copy = document.createElement('div');
+      copy.className = 'achievement-copy';
+      const title = document.createElement('strong');
+      title.textContent = item.secret && !isUnlocked ? 'Logro secreto' : item.title;
+      const description = document.createElement('small');
+      description.textContent = item.secret && !isUnlocked ? 'Descubre cómo desbloquearlo.' : item.description;
+      const meta = document.createElement('span');
+      meta.className = 'achievement-rarity';
+      meta.textContent = item.rarity + ' · +' + getAchievementXPForRarity(item.rarity) + ' XP';
+      copy.appendChild(title);
+      copy.appendChild(description);
+      copy.appendChild(meta);
+      const progress = document.createElement('div');
+      progress.className = 'achievement-progress';
+      const progressTrack = document.createElement('div');
+      progressTrack.className = 'achievement-progress-track';
+      const progressFill = document.createElement('span');
+      const ratio = item.target ? Math.min(100, item.progress / item.target * 100) : 0;
+      progressFill.style.width = ratio + '%';
+      progressTrack.appendChild(progressFill);
+      const progressText = document.createElement('small');
+      progressText.textContent = item.secret && !isUnlocked ? '???' : (isUnlocked ? 'Desbloqueado' : item.progress + ' / ' + item.target + (item.suffix || ''));
+      progress.appendChild(progressTrack);
+      progress.appendChild(progressText);
+      card.appendChild(icon);
+      card.appendChild(copy);
+      card.appendChild(progress);
+      grid.appendChild(card);
+    });
+    section.appendChild(grid);
+    container.appendChild(section);
+  });
+  const count = playerProfile.unlockedAchievements.length;
+  const countEl = document.getElementById('achievementCount');
+  if (countEl) countEl.textContent = count + ' / ' + definitions.length + ' desbloqueados';
+}
+
 function renderMainMenu() {
   document.getElementById('menuPlayerName').textContent = playerProfile.name || 'Jugador';
-  document.getElementById('menuPlayerSummary').textContent = playerProfile.testsCompleted
-    ? playerProfile.testsCompleted + ' tests completados · ' + playerProfile.totalQuestionsAnswered + ' preguntas contestadas'
-    : 'Todavía no has completado ningún test.';
+  const levelInfo = getPlayerLevelInfo(playerProfile.totalXP);
+  document.getElementById('menuPlayerSummary').textContent = levelInfo.rank.title + ' · Nivel ' + levelInfo.level + ' · ' + Math.floor(playerProfile.totalXP) + ' XP';
   document.getElementById('menuBestStreak').textContent = playerProfile.bestStreak || 0;
 }
 
@@ -176,6 +591,24 @@ function renderProfileScreen() {
     : 0;
   document.getElementById('profileAccuracy').textContent = accuracy + '%';
   document.getElementById('profileBestStreak').textContent = playerProfile.bestStreak;
+  const practicalAnsweredEl = document.getElementById('profilePracticalAnswered');
+  const practicalCorrectEl = document.getElementById('profilePracticalCorrect');
+  const practicalWrongEl = document.getElementById('profilePracticalWrong');
+  const practicalAccuracyEl = document.getElementById('profilePracticalAccuracy');
+  const practicalTestsEl = document.getElementById('profilePracticalTests');
+  const practicalStreakEl = document.getElementById('profilePracticalStreak');
+  if (practicalAnsweredEl) practicalAnsweredEl.textContent = playerProfile.practicalQuestionsAnswered || 0;
+  if (practicalCorrectEl) practicalCorrectEl.textContent = playerProfile.practicalCorrect || 0;
+  if (practicalWrongEl) practicalWrongEl.textContent = playerProfile.practicalWrong || 0;
+  if (practicalTestsEl) practicalTestsEl.textContent = playerProfile.practicalTestsCompleted || 0;
+  if (practicalStreakEl) practicalStreakEl.textContent = playerProfile.practicalBestStreak || 0;
+  if (practicalAccuracyEl) practicalAccuracyEl.textContent = (playerProfile.practicalQuestionsAnswered ? Math.round(playerProfile.practicalCorrect / playerProfile.practicalQuestionsAnswered * 100) : 0) + '%';
+  const levelBeforeAchievementSync = getPlayerLevelInfo(playerProfile.totalXP).level;
+  checkAndUnlockAchievements();
+  const levelAfterAchievementSync = getPlayerLevelInfo(playerProfile.totalXP).level;
+  if (levelAfterAchievementSync > levelBeforeAchievementSync) showLevelUpAnimation(levelBeforeAchievementSync, levelAfterAchievementSync);
+  renderLevelProgress();
+  renderAchievements();
   document.getElementById('historyCount').textContent = playerProfile.testsCompleted + ' tests realizados';
 
   const list = document.getElementById('historyList');
@@ -221,10 +654,11 @@ function saveCompletedTest(result) {
   const answered = result.correct + result.wrong;
   const accuracyPct = answered ? Math.round((result.correct / answered) * 100) : 0;
   const bestStreak = calculateBestStreak(activeQuestions, userAnswers);
+  const testType = currentTestType();
   const record = {
     date: new Date().toISOString(),
     title: activeSessionTitle || (activeQuestions.length + ' preguntas · Test'),
-    type: currentTestType(),
+    type: testType,
     correctionMode: practiceMode ? 'Práctica' : 'Examen',
     totalQuestions: activeQuestions.length,
     answered: answered,
@@ -234,17 +668,33 @@ function saveCompletedTest(result) {
     accuracyPct: accuracyPct,
     score: result.score,
     scorePct: result.scorePct,
-    bestStreak: bestStreak
+    bestStreak: bestStreak,
+    passed: result.score >= activeQuestions.length * 0.5
   };
 
   playerProfile.testsCompleted += 1;
   playerProfile.totalQuestionsAnswered += answered;
   playerProfile.totalCorrect += result.correct;
   playerProfile.totalWrong += result.wrong;
+  if (testType === 'supuestos') {
+    playerProfile.practicalTestsCompleted += 1;
+    playerProfile.practicalQuestionsAnswered += answered;
+    playerProfile.practicalCorrect += result.correct;
+    playerProfile.practicalWrong += result.wrong;
+    playerProfile.practicalBestStreak = Math.max(playerProfile.practicalBestStreak || 0, bestStreak);
+  }
   playerProfile.bestStreak = Math.max(playerProfile.bestStreak, bestStreak);
+  playerProfile.bestComebackStreak = Math.max(playerProfile.bestComebackStreak || 0, calculateBestComebackStreak(activeQuestions, userAnswers));
+  playerProfile.perfectTestsStreak = accuracyPct === 100 && result.blank === 0 ? playerProfile.perfectTestsStreak + 1 : 0;
+  const completedAt = new Date();
+  const dateKey = completedAt.getFullYear() + '-' + String(completedAt.getMonth()+1).padStart(2,'0') + '-' + String(completedAt.getDate()).padStart(2,'0');
+  if (playerProfile.practiceDates.indexOf(dateKey) === -1) playerProfile.practiceDates.push(dateKey);
+  playerProfile.earlyBird = !!playerProfile.earlyBird || completedAt.getHours() < 8;
+  playerProfile.nightOwl = !!playerProfile.nightOwl || completedAt.getHours() >= 22;
   playerProfile.history.unshift(record);
   playerProfile.history = playerProfile.history.slice(0, 40);
   savePlayerProfile();
+  checkAndUnlockAchievements();
 }
 
 function currentTestType() {
@@ -338,6 +788,7 @@ function startTest() {
   document.getElementById('streakStat').hidden = !practiceMode;
   document.getElementById('screenFX').classList.toggle('exam-mode', !practiceMode);
   document.getElementById('mobileDock').hidden = false;
+  updateInTestPlayerHUD();
 
   renderQuestion();
   testArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -373,6 +824,32 @@ function getHeatLevel(streak) {
   if (streak >= 5) return 3;
   if (streak >= 3) return 2;
   return 1;
+}
+
+function vibrateForStreak(streak) {
+  const body = document.body;
+  if (!streak || !playerSettings.effectsEnabled || !playerSettings.shakeEnabled || playerSettings.reducedMotion) {
+    stopStreakShake();
+    return;
+  }
+
+  // El temblor permanece activo durante toda la racha y aumenta con cada acierto.
+  const maxDistance = Math.min(2, Math.max(0.5, Number(playerSettings.shakeMaxDistance) || 2));
+  const distance = Math.min(maxDistance, Math.max(0.15, streak * (maxDistance / 13)));
+  const baseDuration = Math.min(1000, Math.max(100, Number(playerSettings.shakeBaseDuration) || 1000));
+  const duration = Math.max(50, baseDuration - streak * 20);
+  body.style.setProperty('--streak-shake-distance', distance.toFixed(1) + 'px');
+  body.style.setProperty('--streak-shake-duration', duration.toFixed(0) + 'ms');
+  if (!body.classList.contains('streak-screen-shaking')) {
+    body.classList.add('streak-screen-shaking');
+  }
+}
+
+function stopStreakShake() {
+  const body = document.body;
+  body.classList.remove('streak-screen-shaking');
+  body.style.removeProperty('--streak-shake-distance');
+  body.style.removeProperty('--streak-shake-duration');
 }
 
 function isStreakMilestone(streak) {
@@ -602,9 +1079,10 @@ function renderQuestion() {
   const srcLabels = (type === 'supuestos') ? SP_SOURCE_LABELS : PM_SOURCE_LABELS;
   const subLabels = (type === 'supuestos') ? SP_SUBTOPIC_LABELS : PM_SUBTOPIC_LABELS;
 
-  const blockLabel = srcLabels[q.source] || q.source;
-  const topicLabel = subLabels[q.topic] || q.topic;
-  qMeta.textContent = 'Código ' + q.code + ' · ' + blockLabel + ' · ' + topicLabel;
+  // Durante el test no mostramos metadatos del banco (bloque, archivo ni tema).
+  // Esta información queda reservada para la revisión posterior.
+  qMeta.textContent = '';
+  qMeta.style.display = 'none';
   qText.textContent = q.question;
 
   optionsList.innerHTML = '';
@@ -637,12 +1115,15 @@ function renderQuestion() {
         animateAnswerOutcome(isCorrect, function() {
           if (isCorrect) {
             const streak = getCurrentStreak();
+            awardCorrectQuestion(q, currentTestType(), false, false, streak);
+            vibrateForStreak(streak);
             const heat = getHeatLevel(streak);
             setHeatMood(streak);
             spawnFlames(14 + heat * 7, heat);
             spawnEmbers(Math.min(58, 12 + streak * 3 + heat * 4));
             if (isStreakMilestone(streak)) showStreakToast(streak);
           } else {
+            stopStreakShake();
             triggerFreezeEffect('¡RACHA INTERRUMPIDA! ¡LLEGA EL HIELO!');
           }
         });
@@ -658,8 +1139,9 @@ function renderQuestion() {
     optionsList.appendChild(li);
   });
 
-  normaText.textContent = q.norma ? ('Norma de referencia: ' + q.norma) : '';
-  normaText.style.display = q.norma ? 'inline-flex' : 'none';
+  // La norma de referencia solo se muestra en la revisión, después de corregir el test.
+  normaText.textContent = '';
+  normaText.style.display = 'none';
   document.getElementById('prevBtn').disabled = currentIndex === 0;
   document.getElementById('nextBtn').disabled = currentIndex === activeQuestions.length - 1;
 
@@ -704,7 +1186,7 @@ function buildReviewItem(item) {
 
   const title = document.createElement('span');
   title.className = 'review-trigger-title';
-  title.textContent = 'Pregunta ' + item.idx + ' · Código ' + (q.code || '—');
+  title.textContent = 'Pregunta ' + item.idx;
   const status = document.createElement('span');
   status.className = 'review-trigger-status';
   status.textContent = item.user ? 'Ver corrección +' : 'Sin responder +';
@@ -719,6 +1201,13 @@ function buildReviewItem(item) {
   question.className = 'review-question-text';
   question.textContent = q.question || 'Texto de pregunta no disponible.';
   panel.appendChild(question);
+
+  if (q.code) {
+    const code = document.createElement('p');
+    code.className = 'review-code';
+    code.textContent = 'Código de pregunta: ' + q.code;
+    panel.appendChild(code);
+  }
 
   const answers = document.createElement('div');
   answers.className = 'review-options';
@@ -801,10 +1290,13 @@ function finishTest() {
   let wrong = 0;
   let blank = 0;
   const details = [];
+  const xpBeforeTest = playerProfile.totalXP;
+  let consecutiveCorrect = 0;
 
   activeQuestions.forEach(function(q, idx) {
     const user = userAnswers[idx];
     if (!user) {
+      consecutiveCorrect = 0;
       blank++;
       details.push({ idx: idx + 1, q: q, user: null });
       return;
@@ -812,7 +1304,10 @@ function finishTest() {
 
     if (user === q.correct) {
       correct++;
+      consecutiveCorrect++;
+      awardCorrectQuestion(q, currentTestType(), true, true, consecutiveCorrect);
     } else {
+      consecutiveCorrect = 0;
       wrong++;
       details.push({ idx: idx + 1, q: q, user: user });
     }
@@ -823,7 +1318,15 @@ function finishTest() {
   const score = correct - wrong / 3;
   const scorePct = Math.round((score / maxPoints) * 100);
   const passed = score >= maxPoints * 0.5;
+  savePlayerProfile();
   saveCompletedTest({ correct: correct, wrong: wrong, blank: blank, score: score, scorePct: scorePct });
+  const gainedXP = playerProfile.totalXP - xpBeforeTest;
+  const oldLevel = getPlayerLevelInfo(xpBeforeTest).level;
+  const newLevel = getPlayerLevelInfo(playerProfile.totalXP).level;
+  if (newLevel > oldLevel) showLevelUpAnimation(oldLevel, newLevel);
+  else if (gainedXP > 0) showEffectToast('+' + Math.round(gainedXP) + ' XP · Experiencia ganada', 'fire');
+  updateInTestPlayerHUD();
+  stopStreakShake();
 
   const box = document.getElementById('scoreBox');
   box.className = 'score ' + (passed ? '' : 'bad');
@@ -858,28 +1361,30 @@ function finishTest() {
     box.appendChild(perfect);
   }
 
-  document.querySelector('.controls').style.display = 'flex';
+  // Restablece el display definido por CSS: flex en escritorio y grid en móvil.
+  // No fijar 'flex' inline, porque rompe la cuadrícula responsive del menú de nuevo desafío.
+  document.querySelector('.controls').style.display = '';
   document.getElementById('mobileDock').hidden = true;
   document.getElementById('testArea').classList.add('test-finished');
 
   // En modo examen, la corrección global también muestra primero el color
   // del resultado y después activa el efecto correspondiente.
   resetScreenMood();
-  const resultIsPerfect = wrong === 0 && blank === 0;
-  const outcomeClass = resultIsPerfect ? 'result-flash-good' : 'result-flash-bad';
+  const outcomeClass = passed ? 'result-flash-good' : 'result-flash-bad';
   document.body.classList.remove('result-flash-good', 'result-flash-bad');
   void document.body.offsetWidth;
   document.body.classList.add(outcomeClass);
   window.setTimeout(function() {
     document.body.classList.remove(outcomeClass);
-    if (!practiceMode && !resultIsPerfect) {
-      triggerFreezeEffect('CORRECCIÓN FINALIZADA · ¡LLEGA EL HIELO!');
-    } else if (resultIsPerfect) {
-      setHeatMood(Math.max(2, calculateBestStreak(activeQuestions, userAnswers)));
-      spawnFlames(46, Math.max(2, calculateBestStreak(activeQuestions, userAnswers)));
-      spawnEmbers(60);
-    } else if (wrong > 0) {
-      triggerFreezeEffect('CORRECCIÓN FINALIZADA · ¡LLEGA EL HIELO!');
+    if (passed) {
+      // Aprobar el test activa el fuego al máximo, independientemente de la racha.
+      setHeatMood(999);
+      spawnFlames(72, 7);
+      spawnEmbers(90);
+      showEffectToast('¡APTO! · ¡FUEGO MÁXIMO!', 'fire');
+    } else {
+      // Suspender activa el efecto de hielo como cierre del desafío.
+      triggerFreezeEffect('NO APTO · ¡EL EXAMEN SE CONGELA!');
     }
   }, 600);
 
@@ -917,7 +1422,6 @@ document.getElementById('homeBtn').addEventListener('click', returnToMenu);
 document.getElementById('menuStartBtn').addEventListener('click', openSetupScreen);
 document.getElementById('menuOptionsBtn').addEventListener('click', function() { showAppScreen('optionsScreen'); });
 document.getElementById('menuProfileBtn').addEventListener('click', function() { showAppScreen('profileScreen'); });
-document.getElementById('menuCreditsBtn').addEventListener('click', function() { showAppScreen('creditsScreen'); });
 document.getElementById('setupBackBtn').addEventListener('click', returnToMenu);
 document.querySelectorAll('[data-back-menu]').forEach(function(button) {
   button.addEventListener('click', returnToMenu);
@@ -934,10 +1438,20 @@ document.getElementById('playerNameForm').addEventListener('submit', function(ev
   renderProfileScreen();
 });
 
+document.getElementById('shakeMaxDistance').addEventListener('input', function(event) {
+  document.getElementById('shakeMaxDistanceValue').textContent = Number(event.target.value).toFixed(1) + ' px';
+});
+document.getElementById('shakeBaseDuration').addEventListener('input', function(event) {
+  document.getElementById('shakeBaseDurationValue').textContent = event.target.value + ' ms';
+});
+
 document.getElementById('saveOptionsBtn').addEventListener('click', function() {
   playerSettings.effectsEnabled = document.getElementById('effectsEnabled').checked;
   playerSettings.fireIntensity = document.getElementById('fireIntensitySelect').value;
   playerSettings.reducedMotion = document.getElementById('reducedMotionToggle').checked;
+  playerSettings.shakeEnabled = document.getElementById('shakeEnabled').checked;
+  playerSettings.shakeMaxDistance = Number(document.getElementById('shakeMaxDistance').value);
+  playerSettings.shakeBaseDuration = Number(document.getElementById('shakeBaseDuration').value);
   const saved = savePlayerSettings();
   applyPlayerSettings();
   resetScreenMood();
