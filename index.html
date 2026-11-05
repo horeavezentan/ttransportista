@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#090d1c" />
   <meta name="description" content="Practica y prepara tu título de transportista con tests y supuestos prácticos." />
-  <title>Test título de transportista · Versión 14.0</title>
+  <title>Test título de transportista · Versión 20.0</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -46,6 +46,11 @@
           <span><strong>Iniciar test</strong><small>Elige tu próximo desafío</small></span>
           <span class="menu-action-arrow" aria-hidden="true">→</span>
         </button>
+        <button class="menu-action" id="menuChallengesBtn" type="button">
+          <span class="menu-action-icon" aria-hidden="true">📚</span>
+          <span><strong>Desafíos</strong><small>Ruta de estudio por temas y módulos</small></span>
+          <span class="menu-action-arrow" aria-hidden="true">→</span>
+        </button>
         <button class="menu-action" id="menuProfileBtn" type="button">
           <span class="menu-action-icon" aria-hidden="true">👤</span>
           <span><strong>Perfil del jugador</strong><small>Estadísticas e historial</small></span>
@@ -55,7 +60,15 @@
           <button class="menu-action menu-action-small" id="menuOptionsBtn" type="button"><span aria-hidden="true">⚙️</span> Opciones</button>
         </div>
       </div>
+      <div class="menu-daily-strip"><span>🔥 Racha diaria</span><strong id="menuDailyStreak">0 días</strong><small>Entra cada día para mantenerla</small></div>
       <p class="local-save-note"><span aria-hidden="true">💾</span> Progreso guardado localmente en este dispositivo</p>
+    </section>
+
+    <!-- DESAFÍOS POR SUBTEMA -->
+    <section class="game-subscreen card" id="challengeScreen" hidden aria-label="Desafíos">
+      <div class="subscreen-heading"><div><span class="section-kicker">RUTA DE ESTUDIO</span><h2>Biblioteca de desafíos</h2><p id="challengeSummary">0 subtemas completados</p></div><button class="secondary back-menu-btn" type="button" data-back-menu>← Menú</button></div>
+      <p class="challenge-intro">Elige libremente cualquier módulo, tema o parte: no hay desbloqueos ni orden obligatorio. Puedes hacer primero el test o los supuestos. Si suspendes, repites esa parte; cuando la apruebas queda finalizada. Los supuestos se seleccionan al azar según las cantidades del plan.</p>
+      <div id="challengeBooks" class="challenge-books"></div>
     </section>
 
     <!-- OPCIONES -->
@@ -130,6 +143,7 @@
         <p class="level-rule">XP por respuestas correctas y recompensas de logros. Los supuestos prácticos y los logros raros conceden más experiencia.</p>
       </section>
 
+      <section class="daily-profile-card"><div><span class="section-kicker">CONSTANCIA</span><h3>Racha diaria</h3></div><div class="daily-profile-stats"><strong>🔥 <span id="profileDailyStreak">0 días</span></strong><strong>📅 <span id="profileDailyDays">0</span> días de uso</strong><strong>🏅 Récord: <span id="profileDailyBest">0 días</span></strong></div></section>
       <div class="profile-stats-grid">
         <article class="profile-stat"><span>🎮 Tests realizados</span><strong id="profileTests">0</strong></article>
         <article class="profile-stat"><span>📝 Preguntas contestadas</span><strong id="profileAnswered">0</strong></article>
@@ -151,9 +165,15 @@
         </div>
       </section>
 
+      <article class="profile-stat challenge-profile-stat"><span>📚 Subtemas completados</span><strong id="profileChallengesDone">0</strong></article>
       <section class="achievements-section" aria-label="Colección de logros">
         <div class="history-heading achievements-heading"><div><span class="section-kicker">TUS DESAFÍOS</span><h3>Colección de logros</h3></div><span class="history-count" id="achievementCount">0 logros</span></div>
-        <div id="achievementsList" class="achievements-list"></div>
+        <div class="achievements-recent-heading">Últimos logros desbloqueados</div>
+        <div id="recentAchievementsList" class="achievement-grid achievement-recent-grid"></div>
+        <details class="achievements-full-details" id="allAchievementsDetails">
+          <summary id="allAchievementsSummary">Ver todos los logros</summary>
+          <div id="achievementsList" class="achievements-list"></div>
+        </details>
       </section>
 
       <div class="history-section">
@@ -297,7 +317,38 @@
       <strong class="level-up-new" id="levelUpNew">NIVEL 2</strong>
       <div class="level-up-rank" id="levelUpRank">🚚 Conductor Novato</div>
       <p>Tu experiencia en carretera sigue creciendo.</p>
+      <button class="primary level-up-continue" id="levelUpContinueBtn" type="button">Continuar</button>
     </div>
+  </div>
+
+  <div class="challenge-mode-overlay" id="challengeModeOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="challengeModeHeading">
+    <div class="challenge-mode-panel">
+      <span class="section-kicker">ELIGE CÓMO JUGAR</span>
+      <h2 id="challengeModeHeading">Tu desafío</h2>
+      <p>El contenido es el mismo; cambia cuándo recibes la corrección.</p>
+      <div class="challenge-mode-options">
+        <button class="challenge-mode-choice practice-choice" id="challengePracticeBtn" type="button"><span class="choice-icon">⚡</span><strong>Modo práctica</strong><small>Corrección inmediata después de cada respuesta, con explicación para aprender durante el recorrido.</small></button>
+        <button class="challenge-mode-choice exam-choice" id="challengeExamBtn" type="button"><span class="choice-icon">🎓</span><strong>Modo examen</strong><small>Sin mostrar respuestas correctas ni explicaciones hasta finalizar y corregir todo el desafío.</small></button>
+      </div>
+      <button class="secondary challenge-mode-cancel" id="challengeModeCancel" type="button">Cancelar</button>
+    </div>
+  </div>
+
+  <div class="achievement-reveal-overlay" id="achievementRevealOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="achievementRevealTitle">
+    <div class="achievement-reveal-scene" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="achievement-reveal-card">
+      <span class="achievement-reveal-eyebrow" id="achievementRevealEyebrow">LOGRO DESBLOQUEADO</span>
+      <span class="achievement-reveal-rarity" id="achievementRevealRarity">COMÚN</span>
+      <div class="achievement-reveal-seal"><span id="achievementRevealIcon">🏅</span></div>
+      <h2 id="achievementRevealTitle">Nuevo logro</h2>
+      <p id="achievementRevealDescription">Has conseguido un nuevo logro.</p>
+      <strong class="achievement-reveal-xp" id="achievementRevealXP">+10 XP</strong>
+      <button class="primary" id="achievementRevealClose" type="button">Continuar</button>
+    </div>
+  </div>
+
+  <div class="daily-entry-overlay" id="dailyEntryOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="dailyEntryTitle">
+    <div class="daily-entry-card"><div class="daily-entry-emblem">🔥</div><span class="section-kicker">CONTROL DE RACHA</span><h2 id="dailyEntryTitle">¡Un día más en ruta!</h2><p id="dailyEntryMessage"></p><div class="daily-entry-streak"><strong id="dailyStreakValue">1</strong><span>días seguidos</span></div><div class="daily-week-strip" id="dailyWeekDays"></div><div class="daily-week-track"><span id="dailyWeekProgress"></span></div><small id="dailyWeekCaption">0 de 7 días utilizados esta semana</small><div class="daily-snowflake" id="dailyEntrySnow" hidden>❄️ Racha interrumpida</div><button class="primary" id="dailyEntryClose" type="button">Continuar</button></div>
   </div>
   <div class="streak-toast" id="streakToast" role="status" aria-live="polite"></div>
   <div class="screen-fx" id="screenFX" aria-hidden="true"></div>

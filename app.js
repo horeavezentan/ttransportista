@@ -7,10 +7,20 @@ let screenMoodTimer = null;
 let answerEffectTimer = null;
 let activeSessionTitle = '';
 let testFinished = false;
+let testFinishing = false;
+let answerEffectGeneration = 0;
+let resultEffectTimer = null;
+let celebrationNextTimer = null;
 
 const PROFILE_STORAGE_KEY = 'transportista_player_profile_v1';
 const SETTINGS_STORAGE_KEY = 'transportista_player_settings_v1';
-const APP_SCREENS = ['mainMenu', 'setupScreen', 'optionsScreen', 'profileScreen'];
+const APP_SCREENS = ['mainMenu', 'setupScreen', 'challengeScreen', 'optionsScreen', 'profileScreen'];
+let activeChallenge = null;
+let dailyEntryState = null;
+let pendingChallengePart = null;
+let achievementRevealQueue = [];
+let achievementRevealActive = false;
+let pendingLevelUpQueue = [];
 
 const PLAYER_RANKS = [
   { title: '🚦 Aprendiz del Volante' },
@@ -56,6 +66,12 @@ function defaultPlayerProfile() {
     achievementXPClaimed: [],
     perfectTestsStreak: 0,
     practiceDates: [],
+    dailyUsageDates: [],
+    dailyStreak: 0,
+    bestDailyStreak: 0,
+    dailyBreakNoticeDate: '',
+    lastActiveDate: '',
+    challengeProgress: {},
     history: []
   };
 }
@@ -88,6 +104,12 @@ function loadPlayerProfile() {
       achievementXPClaimed: Array.isArray(parsed.achievementXPClaimed) ? parsed.achievementXPClaimed : [],
       perfectTestsStreak: Math.max(0, Number(parsed.perfectTestsStreak) || 0),
       practiceDates: Array.isArray(parsed.practiceDates) ? parsed.practiceDates : [],
+      dailyUsageDates: Array.isArray(parsed.dailyUsageDates) ? parsed.dailyUsageDates : [],
+      dailyStreak: Math.max(0, Number(parsed.dailyStreak) || 0),
+      bestDailyStreak: Math.max(0, Number(parsed.bestDailyStreak) || 0),
+      dailyBreakNoticeDate: typeof parsed.dailyBreakNoticeDate === 'string' ? parsed.dailyBreakNoticeDate : '',
+      lastActiveDate: typeof parsed.lastActiveDate === 'string' ? parsed.lastActiveDate : '',
+      challengeProgress: parsed.challengeProgress && typeof parsed.challengeProgress === 'object' ? parsed.challengeProgress : {},
       history: Array.isArray(parsed.history) ? parsed.history.slice(0, 40) : []
     };
   } catch (error) {
@@ -173,6 +195,7 @@ function showAppScreen(screenId) {
   });
   document.getElementById('mobileDock').hidden = screenId !== 'setupScreen' || !activeQuestions.length;
   if (screenId === 'mainMenu') renderMainMenu();
+  if (screenId === 'challengeScreen') renderChallengeScreen();
   if (screenId === 'profileScreen') renderProfileScreen();
   if (screenId === 'optionsScreen') applyPlayerSettings();
   window.scrollTo({ top: 0, behavior: playerSettings.reducedMotion ? 'auto' : 'smooth' });
@@ -223,22 +246,34 @@ function calculateBestComebackStreak(questions, answers) {
   return best;
 }
 
+function getTopicDisplayLabel(topic, rawLabel) {
+  const match = String(topic || '').match(/^1([A-H])(\d{2})$/);
+  const raw = String(rawLabel || '');
+  const title = raw.replace(/^(?:Tema|Supuesto)\s+\S+\s*[–—-]\s*/i, '').trim();
+  if (!match) return title || raw || String(topic || '');
+  const moduleLetter = match[1];
+  const topicNumber = String(parseInt(match[2], 10));
+  return 'Bloque ' + moduleLetter + ' · Tema ' + topicNumber + (title ? ' — ' + title : '');
+}
+
 function getSessionTitle() {
   const mode = document.getElementById('modeSelect').value;
-  const type = currentTestType() === 'supuestos' ? 'Supuestos prácticos' : 'Preguntas tipo test';
+  const isPractical = currentTestType() === 'supuestos';
+  const type = isPractical ? 'Supuestos prácticos' : 'Preguntas tipo test';
+  const unit = isPractical ? 'supuestos' : 'preguntas';
   const count = activeQuestions.length;
   if (mode === 'topic') {
-    const labels = currentTestType() === 'supuestos' ? SP_SUBTOPIC_LABELS : PM_SUBTOPIC_LABELS;
+    const labels = isPractical ? SP_SUBTOPIC_LABELS : PM_SUBTOPIC_LABELS;
     const topic = document.getElementById('topicSelect').value;
-    return count + ' preguntas · Subtema ' + (labels[topic] || topic);
+    return count + ' ' + unit + ' · ' + getTopicDisplayLabel(topic, labels[topic]);
   }
   if (mode === 'block') {
     const labels = currentTestType() === 'supuestos' ? SP_SOURCE_LABELS : PM_SOURCE_LABELS;
     const block = document.getElementById('blockSelect').value;
     const blockLabel = labels[block] || block;
-    return count + ' preguntas · ' + (/^bloque\b/i.test(blockLabel) ? blockLabel : 'Bloque ' + blockLabel);
+    return count + ' ' + unit + ' · ' + (/^bloque\b/i.test(blockLabel) ? blockLabel : 'Bloque ' + blockLabel);
   }
-  return count + ' preguntas · ' + type;
+  return count + ' ' + unit + ' · ' + type;
 }
 
 function getTotalBankQuestionCount() {
@@ -399,10 +434,17 @@ function getAchievementDefinitions() {
     { id:'secret-long-haul', category:'Secretos', title:'Kilómetro infinito', description:'Completa 100 preguntas en una sola sesión.', icon:'♾️', rarity:'Épico', progress:0, target:1, unlocked:history.some(function(x){return x.totalQuestions>=100 && x.answered>=100;}), secret:true },
     { id:'secret-shift-change', category:'Secretos', title:'Cambio de turno', description:'Completa un test antes de las 8:00 y otro después de las 22:00.', icon:'🌗', rarity:'Raro', progress:0, target:1, unlocked:!!playerProfile.earlyBird && !!playerProfile.nightOwl, secret:true }
   ];
-  return definitions.concat(topicAchievements);
+  const challengeAchievements=[];
+  getChallengeTopics().forEach(function(meta){ const state=getChallengeState(meta.topic); const done=challengePartsDone(meta.topic); const label=meta.title;
+    if(meta.questionCount) challengeAchievements.push({id:'challenge-test-'+meta.topic,category:'Desafíos',title:'Test superado · '+label,description:'Aprueba el bloque de preguntas del '+meta.displayLabel+'.',icon:'📘',rarity:'Raro',progress:state.test?1:0,target:1,unlocked:!!state.test});
+    if(meta.hasSuppositionPart) challengeAchievements.push({id:'challenge-practical-'+meta.topic,category:'Desafíos',title:'Supuestos dominados · '+label,description:'Completa la parte práctica indicada para '+meta.displayLabel+'.',icon:'🧩',rarity:'Épico',progress:state.practical?1:0,target:1,unlocked:!!state.practical});
+    challengeAchievements.push({id:'challenge-complete-'+meta.topic,category:'Desafíos',title:'Desafío completado · '+label,description:'Completa todas las partes de '+meta.displayLabel+'.',icon:'🏆',rarity:'Legendario',progress:done?1:0,target:1,unlocked:done});
+  });
+  return definitions.concat(topicAchievements,challengeAchievements);
 }
 
-function checkAndUnlockAchievements() {
+function checkAndUnlockAchievements(suppressLevelAnimation) {
+  const levelBeforeRewards = getPlayerLevelInfo(playerProfile.totalXP).level;
   const definitions = getAchievementDefinitions();
   const newlyUnlocked = [];
   const newlyPaid = [];
@@ -421,12 +463,13 @@ function checkAndUnlockAchievements() {
   });
   if (newlyUnlocked.length || newlyPaid.length) {
     savePlayerProfile();
-    newlyPaid.forEach(function(entry, index) {
-      window.setTimeout(function() {
-        const prefix = newlyUnlocked.some(function(item) { return item.id === entry.item.id; }) ? '🏅 LOGRO DESBLOQUEADO' : '🏅 RECOMPENSA DE LOGRO';
-        showEffectToast(prefix + ' · ' + entry.item.title + ' · +' + entry.reward + ' XP', 'fire');
-      }, index * 1800);
+    newlyPaid.forEach(function(entry) {
+      enqueueAchievementReveal(entry.item, entry.reward, newlyUnlocked.some(function(item) { return item.id === entry.item.id; }));
     });
+  }
+  const levelAfterRewards = getPlayerLevelInfo(playerProfile.totalXP).level;
+  if (!suppressLevelAnimation && levelAfterRewards > levelBeforeRewards) {
+    showLevelUpAnimation(levelBeforeRewards, levelAfterRewards);
   }
   return newlyUnlocked;
 }
@@ -443,16 +486,20 @@ function awardCorrectQuestion(question, type, silent, deferSave, streakMultiplie
   const xpValue = getXPForQuestionType(type);
   const earnedXP = Math.min(xpValue, Math.max(0, getXPForMaximumLevel() - playerProfile.totalXP));
   playerProfile.totalXP = Math.floor(playerProfile.totalXP) + earnedXP;
+  if (!deferSave) {
+    savePlayerProfile();
+    // El nivel se comprueba después de pagar los logros para no perder una subida
+    // causada por la XP de un logro ni mostrar dos animaciones en la misma respuesta.
+    checkAndUnlockAchievements(true);
+  }
   const nextLevel = getPlayerLevelInfo(playerProfile.totalXP).level;
-  if (!deferSave) savePlayerProfile();
   if (!silent) {
     if (nextLevel > previousLevel) {
       showLevelUpAnimation(previousLevel, nextLevel);
-    } else {
+    } else if (earnedXP > 0) {
       showEffectToast('+' + Math.round(earnedXP) + ' XP' + (type === 'supuestos' ? ' · SUPUESTO' : ' · TEST'), 'fire');
     }
   }
-  if (!deferSave) checkAndUnlockAchievements();
   if (!deferSave) {
     if (!document.getElementById('profileScreen').hidden) renderProfileScreen();
     renderMainMenu();
@@ -462,6 +509,15 @@ function awardCorrectQuestion(question, type, silent, deferSave, streakMultiplie
 }
 
 function showLevelUpAnimation(previousLevel, nextLevel) {
+  const levelOverlay = document.getElementById('levelUpOverlay');
+  if (achievementRevealActive || achievementRevealQueue.length || (levelOverlay && !levelOverlay.hidden)) {
+    pendingLevelUpQueue.push({ previousLevel: previousLevel, nextLevel: nextLevel });
+    return;
+  }
+  presentLevelUpAnimation(previousLevel, nextLevel);
+}
+
+function presentLevelUpAnimation(previousLevel, nextLevel) {
   const overlay = document.getElementById('levelUpOverlay');
   if (!overlay) return;
   const info = getPlayerLevelInfo(playerProfile.totalXP);
@@ -473,11 +529,103 @@ function showLevelUpAnimation(previousLevel, nextLevel) {
   void overlay.offsetWidth;
   overlay.classList.add('level-up-show');
   updateInTestPlayerHUD();
-  window.clearTimeout(showLevelUpAnimation.timer);
-  showLevelUpAnimation.timer = window.setTimeout(function() {
+  window.clearTimeout(presentLevelUpAnimation.timer);
+  presentLevelUpAnimation.timer = window.setTimeout(closeLevelUpAnimation, 4400);
+}
+
+function closeLevelUpAnimation() {
+  window.clearTimeout(presentLevelUpAnimation.timer);
+  const overlay = document.getElementById('levelUpOverlay');
+  if (overlay) {
     overlay.classList.remove('level-up-show');
     overlay.hidden = true;
-  }, 4400);
+  }
+  if (pendingLevelUpQueue.length) {
+    const next = pendingLevelUpQueue.shift();
+    window.clearTimeout(celebrationNextTimer);
+    celebrationNextTimer = window.setTimeout(function() { presentLevelUpAnimation(next.previousLevel, next.nextLevel); }, 240);
+  } else if (achievementRevealQueue.length) {
+    window.clearTimeout(celebrationNextTimer);
+    celebrationNextTimer = window.setTimeout(playNextAchievementReveal, 220);
+  }
+}
+
+function clearCelebrationOverlays() {
+  window.clearTimeout(presentLevelUpAnimation.timer);
+  window.clearTimeout(playNextAchievementReveal.timer);
+  window.clearTimeout(closeAchievementReveal.nextTimer);
+  window.clearTimeout(celebrationNextTimer);
+  celebrationNextTimer = null;
+  achievementRevealQueue = [];
+  pendingLevelUpQueue = [];
+  achievementRevealActive = false;
+  ['levelUpOverlay', 'achievementRevealOverlay', 'challengeModeOverlay', 'dailyEntryOverlay'].forEach(function(id) {
+    const overlay = document.getElementById(id);
+    if (overlay) {
+      overlay.hidden = true;
+      overlay.classList.remove('level-up-show', 'achievement-reveal-show', 'challenge-mode-show', 'daily-entry-show');
+    }
+  });
+  pendingChallengePart = null;
+  dailyEntryState = null;
+}
+
+function rarityClass(rarity) {
+  return 'rarity-' + String(rarity || 'Común').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z]+/g, '-');
+}
+
+function enqueueAchievementReveal(item, reward, isNew) {
+  achievementRevealQueue.push({ item: item, reward: reward, isNew: isNew !== false });
+  playNextAchievementReveal();
+}
+
+function playNextAchievementReveal() {
+  if (achievementRevealActive) return;
+  const levelOverlay = document.getElementById('levelUpOverlay');
+  if (levelOverlay && !levelOverlay.hidden) return;
+  const overlay = document.getElementById('achievementRevealOverlay');
+  if (!overlay) return;
+  if (!achievementRevealQueue.length) {
+    if (pendingLevelUpQueue.length) {
+      const nextLevel = pendingLevelUpQueue.shift();
+      window.clearTimeout(celebrationNextTimer);
+      celebrationNextTimer = window.setTimeout(function() { presentLevelUpAnimation(nextLevel.previousLevel, nextLevel.nextLevel); }, 220);
+    }
+    return;
+  }
+
+  const entry = achievementRevealQueue.shift();
+  const item = entry.item;
+  const rarity = rarityClass(item.rarity);
+  overlay.className = 'achievement-reveal-overlay ' + rarity;
+  overlay.hidden = false;
+  document.getElementById('achievementRevealEyebrow').textContent = entry.isNew ? 'LOGRO DESBLOQUEADO' : 'RECOMPENSA CONSEGUIDA';
+  document.getElementById('achievementRevealRarity').textContent = String(item.rarity || 'Común').toUpperCase();
+  document.getElementById('achievementRevealIcon').textContent = item.icon || '🏅';
+  document.getElementById('achievementRevealTitle').textContent = item.title || 'Logro desbloqueado';
+  document.getElementById('achievementRevealDescription').textContent = item.description || 'Has conseguido un nuevo logro.';
+  document.getElementById('achievementRevealXP').textContent = '+' + Math.floor(entry.reward || 0) + ' XP';
+  void overlay.offsetWidth;
+  overlay.classList.add('achievement-reveal-show');
+  achievementRevealActive = true;
+  window.clearTimeout(playNextAchievementReveal.timer);
+  playNextAchievementReveal.timer = window.setTimeout(closeAchievementReveal, 3800);
+}
+
+function closeAchievementReveal() {
+  const overlay = document.getElementById('achievementRevealOverlay');
+  window.clearTimeout(playNextAchievementReveal.timer);
+  if (overlay) {
+    overlay.classList.remove('achievement-reveal-show');
+    overlay.hidden = true;
+  }
+  achievementRevealActive = false;
+  window.clearTimeout(closeAchievementReveal.nextTimer);
+  window.clearTimeout(celebrationNextTimer);
+  celebrationNextTimer = window.setTimeout(function() {
+    celebrationNextTimer = null;
+    playNextAchievementReveal();
+  }, 220);
 }
 
 function updateInTestPlayerHUD() {
@@ -511,12 +659,68 @@ function renderLevelProgress() {
   caption.textContent = info.maxLevel ? 'Has alcanzado el rango máximo.' : 'Siguiente rango: ' + PLAYER_RANKS[info.level].title;
 }
 
+function buildAchievementCard(item, isUnlocked) {
+  const card = document.createElement('article');
+  card.className = 'achievement-card rarity-' + String(item.rarity || 'Común').toLowerCase().replace(/\s+/g, '-');
+  card.classList.toggle('is-unlocked', !!isUnlocked);
+  const icon = document.createElement('span');
+  icon.className = 'achievement-icon';
+  icon.textContent = isUnlocked ? (item.icon || '🏅') : '🔒';
+  const copy = document.createElement('div');
+  copy.className = 'achievement-copy';
+  const title = document.createElement('strong');
+  title.textContent = item.secret && !isUnlocked ? 'Logro secreto' : item.title;
+  const description = document.createElement('small');
+  description.textContent = item.secret && !isUnlocked ? 'Descubre cómo desbloquearlo.' : item.description;
+  const meta = document.createElement('span');
+  meta.className = 'achievement-rarity';
+  meta.textContent = item.rarity + ' · +' + getAchievementXPForRarity(item.rarity) + ' XP';
+  copy.appendChild(title);
+  copy.appendChild(description);
+  copy.appendChild(meta);
+  const progress = document.createElement('div');
+  progress.className = 'achievement-progress';
+  const progressTrack = document.createElement('div');
+  progressTrack.className = 'achievement-progress-track';
+  const progressFill = document.createElement('span');
+  const ratio = item.target ? Math.min(100, item.progress / item.target * 100) : 0;
+  progressFill.style.width = ratio + '%';
+  progressTrack.appendChild(progressFill);
+  const progressText = document.createElement('small');
+  progressText.textContent = item.secret && !isUnlocked ? '???' : (isUnlocked ? 'Desbloqueado' : item.progress + ' / ' + item.target + (item.suffix || ''));
+  progress.appendChild(progressTrack);
+  progress.appendChild(progressText);
+  card.appendChild(icon);
+  card.appendChild(copy);
+  card.appendChild(progress);
+  return card;
+}
+
 function renderAchievements() {
   const container = document.getElementById('achievementsList');
+  const recentContainer = document.getElementById('recentAchievementsList');
   if (!container) return;
   const definitions = getAchievementDefinitions();
   const unlocked = new Set(playerProfile.unlockedAchievements);
-  const categories = ['Primeros pasos', 'Dominio del transporte', 'Precisión y perfección', 'Rachas', 'Constancia', 'Supuestos prácticos', 'Dominio de temas', 'Secretos'];
+  const detail = document.getElementById('allAchievementsDetails');
+  const wasOpen = detail ? detail.open : false;
+
+  if (recentContainer) {
+    recentContainer.innerHTML = '';
+    const latest = (playerProfile.unlockedAchievements || []).slice().reverse()
+      .map(function(id) { return definitions.find(function(item) { return item.id === id; }); })
+      .filter(Boolean).slice(0, 3);
+    if (latest.length) {
+      latest.forEach(function(item) { recentContainer.appendChild(buildAchievementCard(item, true)); });
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'history-empty achievement-empty';
+      empty.textContent = 'Todavía no has desbloqueado logros. Tu primera recompensa aparecerá aquí.';
+      recentContainer.appendChild(empty);
+    }
+  }
+
+  const categories = ['Primeros pasos', 'Dominio del transporte', 'Precisión y perfección', 'Rachas', 'Constancia', 'Supuestos prácticos', 'Dominio de temas', 'Desafíos', 'Secretos'];
   container.innerHTML = '';
   categories.forEach(function(category) {
     const items = definitions.filter(function(item) { return item.category === category; });
@@ -528,56 +732,112 @@ function renderAchievements() {
     section.appendChild(heading);
     const grid = document.createElement('div');
     grid.className = 'achievement-grid';
-    items.forEach(function(item) {
-      const isUnlocked = unlocked.has(item.id);
-      const card = document.createElement('article');
-      card.className = 'achievement-card rarity-' + item.rarity.toLowerCase().replace(/\s+/g, '-');
-      card.classList.toggle('is-unlocked', isUnlocked);
-      const icon = document.createElement('span');
-      icon.className = 'achievement-icon';
-      icon.textContent = isUnlocked ? item.icon : '🔒';
-      const copy = document.createElement('div');
-      copy.className = 'achievement-copy';
-      const title = document.createElement('strong');
-      title.textContent = item.secret && !isUnlocked ? 'Logro secreto' : item.title;
-      const description = document.createElement('small');
-      description.textContent = item.secret && !isUnlocked ? 'Descubre cómo desbloquearlo.' : item.description;
-      const meta = document.createElement('span');
-      meta.className = 'achievement-rarity';
-      meta.textContent = item.rarity + ' · +' + getAchievementXPForRarity(item.rarity) + ' XP';
-      copy.appendChild(title);
-      copy.appendChild(description);
-      copy.appendChild(meta);
-      const progress = document.createElement('div');
-      progress.className = 'achievement-progress';
-      const progressTrack = document.createElement('div');
-      progressTrack.className = 'achievement-progress-track';
-      const progressFill = document.createElement('span');
-      const ratio = item.target ? Math.min(100, item.progress / item.target * 100) : 0;
-      progressFill.style.width = ratio + '%';
-      progressTrack.appendChild(progressFill);
-      const progressText = document.createElement('small');
-      progressText.textContent = item.secret && !isUnlocked ? '???' : (isUnlocked ? 'Desbloqueado' : item.progress + ' / ' + item.target + (item.suffix || ''));
-      progress.appendChild(progressTrack);
-      progress.appendChild(progressText);
-      card.appendChild(icon);
-      card.appendChild(copy);
-      card.appendChild(progress);
-      grid.appendChild(card);
-    });
+    items.forEach(function(item) { grid.appendChild(buildAchievementCard(item, unlocked.has(item.id))); });
     section.appendChild(grid);
     container.appendChild(section);
   });
+  if (detail) detail.open = wasOpen;
   const count = playerProfile.unlockedAchievements.length;
   const countEl = document.getElementById('achievementCount');
   if (countEl) countEl.textContent = count + ' / ' + definitions.length + ' desbloqueados';
+  const summary = document.getElementById('allAchievementsSummary');
+  if (summary) summary.textContent = 'Ver todos los logros (' + definitions.length + ')';
 }
+
+function localDateKey(date) {
+  const d = date || new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function dateFromKey(key) { const p=String(key||'').split('-').map(Number); return new Date(p[0],p[1]-1,p[2]); }
+function dayDiff(a,b) { return Math.round((dateFromKey(b)-dateFromKey(a))/86400000); }
+function registerDailyVisit() {
+  const today = localDateKey();
+  const usedDates = Array.isArray(playerProfile.dailyUsageDates) ? playerProfile.dailyUsageDates : [];
+  const alreadyVisitedToday = usedDates.indexOf(today) !== -1;
+
+  if (!alreadyVisitedToday) {
+    const previous = playerProfile.lastActiveDate;
+    const gap = previous ? dayDiff(previous, today) : 0;
+    const broken = !!previous && gap > 1 && (playerProfile.dailyStreak || 0) > 0;
+
+    if (broken) playerProfile.dailyBreakNoticeDate = today;
+    if (previous && gap === 1) playerProfile.dailyStreak = (playerProfile.dailyStreak || 0) + 1;
+    else playerProfile.dailyStreak = 1;
+
+    playerProfile.bestDailyStreak = Math.max(playerProfile.bestDailyStreak || 0, playerProfile.dailyStreak);
+    playerProfile.lastActiveDate = today;
+    playerProfile.dailyUsageDates.push(today);
+    savePlayerProfile();
+  }
+
+  dailyEntryState = {
+    today: today,
+    broken: playerProfile.dailyBreakNoticeDate === today,
+    returning: alreadyVisitedToday
+  };
+}
+
+function showDailyEntry() {
+  if (!dailyEntryState) return;
+  const overlay = document.getElementById('dailyEntryOverlay');
+  if (!overlay) return;
+  const today = dateFromKey(dailyEntryState.today);
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - (today.getDay() + 6) % 7);
+  const days = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+  const strip = document.getElementById('dailyWeekDays');
+  strip.innerHTML = '';
+  let used = 0;
+
+  days.forEach(function(label, i) {
+    const day = new Date(monday);
+    day.setDate(monday.getDate() + i);
+    const key = localDateKey(day);
+    const on = playerProfile.dailyUsageDates.indexOf(key) !== -1;
+    if (on) used++;
+    const cell = document.createElement('div');
+    cell.className = 'daily-day' + (on ? ' is-used' : '');
+    const mark = document.createElement('strong');
+    mark.textContent = on ? '🔥' : '·';
+    const name = document.createElement('small');
+    name.textContent = label;
+    cell.appendChild(mark);
+    cell.appendChild(name);
+    strip.appendChild(cell);
+  });
+
+  const progress = document.getElementById('dailyWeekProgress');
+  progress.style.transition = 'none';
+  progress.style.width = '0%';
+  document.getElementById('dailyWeekCaption').textContent = used + ' de 7 días utilizados esta semana';
+  document.getElementById('dailyStreakValue').textContent = playerProfile.dailyStreak || 1;
+  document.getElementById('dailyEntryTitle').textContent = dailyEntryState.broken
+    ? 'La racha se ha congelado'
+    : (dailyEntryState.returning ? 'Tu racha sigue encendida' : '¡Un día más en ruta!');
+  document.getElementById('dailyEntryMessage').textContent = dailyEntryState.broken
+    ? 'Ayer no entraste. La racha anterior se rompió; hoy puedes empezar una nueva.'
+    : (dailyEntryState.returning
+      ? 'Hoy ya has registrado tu visita. Llevas ' + (playerProfile.dailyStreak || 1) + ' días seguidos. ¡Vuelve mañana para mantenerla!'
+      : 'Has sumado un día a tu racha. Sigue entrando para mantenerla encendida.');
+  document.getElementById('dailyEntrySnow').hidden = !dailyEntryState.broken;
+
+  overlay.hidden = false;
+  overlay.classList.remove('daily-entry-show');
+  void overlay.offsetWidth;
+  overlay.classList.add('daily-entry-show');
+  window.requestAnimationFrame(function() {
+    progress.style.transition = 'width .9s cubic-bezier(.2,.8,.2,1)';
+    progress.style.width = (used / 7 * 100) + '%';
+  });
+}
+function closeDailyEntry() { const overlay=document.getElementById('dailyEntryOverlay'); if(overlay) overlay.hidden=true; dailyEntryState=null; }
 
 function renderMainMenu() {
   document.getElementById('menuPlayerName').textContent = playerProfile.name || 'Jugador';
   const levelInfo = getPlayerLevelInfo(playerProfile.totalXP);
   document.getElementById('menuPlayerSummary').textContent = levelInfo.rank.title + ' · Nivel ' + levelInfo.level + ' · ' + Math.floor(playerProfile.totalXP) + ' XP';
   document.getElementById('menuBestStreak').textContent = playerProfile.bestStreak || 0;
+  const dailyMenu=document.getElementById('menuDailyStreak'); if(dailyMenu) dailyMenu.textContent=(playerProfile.dailyStreak||0)+' días';
 }
 
 function renderProfileScreen() {
@@ -591,6 +851,10 @@ function renderProfileScreen() {
     : 0;
   document.getElementById('profileAccuracy').textContent = accuracy + '%';
   document.getElementById('profileBestStreak').textContent = playerProfile.bestStreak;
+  const dailyCount=document.getElementById('profileDailyDays'); if(dailyCount) dailyCount.textContent=(playerProfile.dailyUsageDates||[]).length;
+  const dailyRun=document.getElementById('profileDailyStreak'); if(dailyRun) dailyRun.textContent=(playerProfile.dailyStreak||0)+' días';
+  const dailyBest=document.getElementById('profileDailyBest'); if(dailyBest) dailyBest.textContent=(playerProfile.bestDailyStreak||0)+' días';
+  const challengeDone=document.getElementById('profileChallengesDone'); if(challengeDone) challengeDone.textContent=getChallengeTopics().filter(function(x){return challengePartsDone(x.topic);}).length;
   const practicalAnsweredEl = document.getElementById('profilePracticalAnswered');
   const practicalCorrectEl = document.getElementById('profilePracticalCorrect');
   const practicalWrongEl = document.getElementById('profilePracticalWrong');
@@ -604,7 +868,7 @@ function renderProfileScreen() {
   if (practicalStreakEl) practicalStreakEl.textContent = playerProfile.practicalBestStreak || 0;
   if (practicalAccuracyEl) practicalAccuracyEl.textContent = (playerProfile.practicalQuestionsAnswered ? Math.round(playerProfile.practicalCorrect / playerProfile.practicalQuestionsAnswered * 100) : 0) + '%';
   const levelBeforeAchievementSync = getPlayerLevelInfo(playerProfile.totalXP).level;
-  checkAndUnlockAchievements();
+  checkAndUnlockAchievements(true);
   const levelAfterAchievementSync = getPlayerLevelInfo(playerProfile.totalXP).level;
   if (levelAfterAchievementSync > levelBeforeAchievementSync) showLevelUpAnimation(levelBeforeAchievementSync, levelAfterAchievementSync);
   renderLevelProgress();
@@ -648,7 +912,7 @@ function renderProfileScreen() {
   });
 }
 
-function saveCompletedTest(result) {
+function saveCompletedTest(result, suppressLevelAnimation) {
   if (testFinished) return;
   testFinished = true;
   const answered = result.correct + result.wrong;
@@ -694,7 +958,219 @@ function saveCompletedTest(result) {
   playerProfile.history.unshift(record);
   playerProfile.history = playerProfile.history.slice(0, 40);
   savePlayerProfile();
-  checkAndUnlockAchievements();
+  checkAndUnlockAchievements(!!suppressLevelAnimation);
+}
+
+const CHALLENGE_MODULE_ORDER = ['A','B','C','D','F','G','H','E'];
+const CHALLENGE_MODULE_NAMES = {A:'Módulo 1 · Transporte',B:'Módulo 2 · Empresa',C:'Módulo 3 · Laboral',D:'Módulo 4 · Fiscalidad',E:'Módulo 5 · Área financiera',F:'Módulo 6 · Acceso y mercado',G:'Módulo 7 · Técnica del transporte',H:'Módulo 8 · Seguridad vial'};
+// Cantidades del PDF. En supuestos: 0 = no hay parte práctica, número = seleccionar esa cantidad al azar,
+// 'all' = incluir todos los supuestos disponibles del subtema.
+const CHALLENGE_PLAN = {
+  '1A01':{questions:82,suppositions:0}, '1A02':{questions:176,suppositions:5}, '1A03':{questions:116,suppositions:5}, '1A04':{questions:79,suppositions:5},
+  '1B01':{questions:200,suppositions:5}, '1B02':{questions:400,suppositions:5},
+  '1C01':{questions:46,suppositions:0}, '1C02':{questions:63,suppositions:5}, '1C03':{questions:117,suppositions:5}, '1C04':{questions:166,suppositions:5}, '1C05':{questions:29,suppositions:0},
+  '1D01':{questions:101,suppositions:5}, '1D02':{questions:24,suppositions:'all'}, '1D03':{questions:61,suppositions:'all'}, '1D04':{questions:155,suppositions:5},
+  '1E01':{questions:120,suppositions:5}, '1E02':{questions:85,suppositions:0}, '1E03':{questions:106,suppositions:5}, '1E04':{questions:52,suppositions:5}, '1E05':{questions:54,suppositions:5}, '1E06':{questions:39,suppositions:0}, '1E07':{questions:141,suppositions:'all'}, '1E08':{questions:89,suppositions:0}, '1E09':{questions:85,suppositions:0}, '1E10':{questions:139,suppositions:0}, '1E11':{questions:47,suppositions:0}, '1E12':{questions:77,suppositions:'all'}, '1E13':{questions:84,suppositions:0},
+  '1F01':{questions:157,suppositions:'all'}, '1F02':{questions:97,suppositions:'all'}, '1F03':{questions:67,suppositions:0}, '1F04':{questions:95,suppositions:0}, '1F05':{questions:200,suppositions:'all'},
+  '1G01':{questions:46,suppositions:0}, '1G02':{questions:30,suppositions:0}, '1G03':{questions:62,suppositions:0}, '1G04':{questions:68,suppositions:0}, '1G05':{questions:62,suppositions:0}, '1G06':{questions:64,suppositions:0}, '1G07':{questions:94,suppositions:'all'}, '1G08':{questions:134,suppositions:0}, '1G09':{questions:46,suppositions:'all'}, '1G10':{questions:56,suppositions:'all'},
+  '1H01':{questions:40,suppositions:0}, '1H02':{questions:35,suppositions:0}, '1H03':{questions:22,suppositions:0}, '1H04':{questions:56,suppositions:0}, '1H05':{questions:152,suppositions:'all'}
+};
+let challengeTopicsCache = null;
+function getChallengeTopics() {
+  if (challengeTopicsCache) return challengeTopicsCache;
+  const keys = Object.keys(PM_SUBTOPIC_LABELS).filter(function(k) { return /^1[A-H]\d\d$/.test(k); });
+  challengeTopicsCache = keys.map(function(topic) {
+    const questions = ALL_QUESTIONS.filter(function(x) { return x.topic === topic; });
+    const suppositions = ALL_SUPUESTOS.filter(function(x) { return x.topic === topic; });
+    const plan = CHALLENGE_PLAN[topic] || {questions:questions.length, suppositions:suppositions.length ? 'all' : 0};
+    const questionTarget = Math.max(0, Number(plan.questions) || 0);
+    const questionCount = Math.min(questionTarget || questions.length, questions.length);
+    const suppositionTarget = plan.suppositions;
+    const hasSuppositionPart = suppositionTarget === 'all' || Number(suppositionTarget) > 0;
+    const suppositionCount = !hasSuppositionPart ? 0 : (suppositionTarget === 'all' ? suppositions.length : Math.min(Number(suppositionTarget), suppositions.length));
+    const rawTitle = PM_SUBTOPIC_LABELS[topic] || topic;
+    const title = rawTitle.replace(/^Tema\s+\S+\s*[–—-]\s*/, '').trim();
+    return {
+      topic:topic,
+      module:topic.charAt(1),
+      title:title,
+      displayLabel:getTopicDisplayLabel(topic, rawTitle),
+      questions:questions.length,
+      questionTarget:questionTarget || questions.length,
+      questionCount:questionCount,
+      questionShortfall:Math.max(0, questionTarget - questions.length),
+      suppositions:suppositions.length,
+      suppositionTarget:suppositionTarget,
+      suppositionCount:suppositionCount,
+      suppositionShortfall:typeof suppositionTarget === 'number' ? Math.max(0, suppositionTarget - suppositions.length) : 0,
+      hasSuppositionPart:hasSuppositionPart
+    };
+  }).filter(function(x) { return x.questions || x.suppositions || x.hasSuppositionPart; })
+    .sort(function(a,b) { const ma=CHALLENGE_MODULE_ORDER.indexOf(a.module), mb=CHALLENGE_MODULE_ORDER.indexOf(b.module); return ma-mb || a.topic.localeCompare(b.topic); });
+  return challengeTopicsCache;
+}
+function getChallengeState(topic) {
+  const stored = playerProfile.challengeProgress[topic] || {};
+  return {test:!!stored.test, practical:!!stored.practical};
+}
+function challengePartsDone(topic) {
+  const meta = getChallengeTopics().find(function(x) { return x.topic === topic; });
+  if (!meta) return false;
+  const state = getChallengeState(topic);
+  return !!state.test && (!meta.hasSuppositionPart || !!state.practical);
+}
+function renderChallengeScreen() {
+  const root = document.getElementById('challengeBooks');
+  if (!root) return;
+  root.innerHTML = '';
+  const topics = getChallengeTopics();
+  const done = topics.filter(function(x) { return challengePartsDone(x.topic); }).length;
+  const total = topics.length;
+  const allParts = topics.reduce(function(sum, meta) { return sum + 1 + (meta.hasSuppositionPart ? 1 : 0); }, 0);
+  const completedParts = topics.reduce(function(sum, meta) {
+    const state = getChallengeState(meta.topic);
+    return sum + (state.test ? 1 : 0) + (meta.hasSuppositionPart && state.practical ? 1 : 0);
+  }, 0);
+
+  const hero = document.createElement('section');
+  hero.className = 'challenge-catalog-hero';
+  const eyebrow = document.createElement('span');
+  eyebrow.className = 'challenge-hero-eyebrow';
+  eyebrow.textContent = 'TU BIBLIOTECA DE RUTAS';
+  const heroTitle = document.createElement('h3');
+  heroTitle.textContent = 'Elige qué dominar hoy';
+  const heroCopy = document.createElement('p');
+  heroCopy.textContent = 'Explora los módulos y empieza cualquier tema. Cada desafío guarda su propio progreso.';
+  const stats = document.createElement('div');
+  stats.className = 'challenge-hero-stats';
+  const statA = document.createElement('span'); statA.textContent = done + ' / ' + total + ' temas completados';
+  const statB = document.createElement('span'); statB.textContent = completedParts + ' / ' + allParts + ' partes aprobadas';
+  stats.appendChild(statA); stats.appendChild(statB);
+  const track = document.createElement('div'); track.className = 'challenge-hero-track';
+  const fill = document.createElement('span'); fill.style.width = (allParts ? completedParts / allParts * 100 : 0) + '%';
+  track.appendChild(fill);
+  hero.appendChild(eyebrow); hero.appendChild(heroTitle); hero.appendChild(heroCopy); hero.appendChild(stats); hero.appendChild(track);
+  root.appendChild(hero);
+
+  CHALLENGE_MODULE_ORDER.forEach(function(module, moduleIndex) {
+    const list = topics.filter(function(x) { return x.module === module; });
+    if (!list.length) return;
+    const section = document.createElement('section');
+    section.className = 'challenge-module challenge-rail-section';
+    const headingRow = document.createElement('div'); headingRow.className = 'challenge-rail-heading';
+    const heading = document.createElement('h3'); heading.textContent = CHALLENGE_MODULE_NAMES[module];
+    const completedInModule = list.filter(function(meta) { return challengePartsDone(meta.topic); }).length;
+    const count = document.createElement('small'); count.textContent = completedInModule + ' / ' + list.length + ' completados';
+    headingRow.appendChild(heading); headingRow.appendChild(count); section.appendChild(headingRow);
+    const rail = document.createElement('div'); rail.className = 'challenge-book-grid challenge-rail';
+
+    list.forEach(function(meta, index) {
+      const state = getChallengeState(meta.topic);
+      const isDone = challengePartsDone(meta.topic);
+      const card = document.createElement('article');
+      card.className = 'challenge-book' + (isDone ? ' is-complete' : '');
+      card.style.setProperty('--poster-index', String((moduleIndex + index) % 6));
+      const cover = document.createElement('div'); cover.className = 'challenge-book-cover';
+      const coverTop = document.createElement('div'); coverTop.className = 'challenge-cover-top';
+      const moduleBadge = document.createElement('span'); moduleBadge.className = 'book-mark'; moduleBadge.textContent = 'MÓDULO ' + ({A:'1',B:'2',C:'3',D:'4',E:'5',F:'6',G:'7',H:'8'}[module] || module);
+      const topicBadge = document.createElement('span'); topicBadge.className = 'challenge-cover-topic'; topicBadge.textContent = 'TEMA ' + String(parseInt(meta.topic.slice(2), 10));
+      coverTop.appendChild(moduleBadge); coverTop.appendChild(topicBadge);
+      const artNumber = document.createElement('span'); artNumber.className = 'challenge-cover-number'; artNumber.textContent = String(parseInt(meta.topic.slice(2), 10)).padStart(2, '0');
+      const coverTitle = document.createElement('strong'); coverTitle.textContent = meta.title;
+      const stamp = document.createElement('small'); stamp.className = 'challenge-cover-stamp'; stamp.textContent = isDone ? '✓ COMPLETADO' : (state.test || state.practical ? 'EN PROGRESO' : 'DESAFÍO');
+      cover.appendChild(coverTop); cover.appendChild(artNumber); cover.appendChild(coverTitle); cover.appendChild(stamp);
+
+      const body = document.createElement('div'); body.className = 'challenge-book-body';
+      const counts = document.createElement('p');
+      let questionText = meta.questionCount + ' preguntas';
+      if (meta.questionShortfall) questionText = meta.questionCount + ' disponibles / ' + meta.questionTarget + ' del plan';
+      else if (meta.questions > meta.questionCount) questionText = meta.questionCount + ' preguntas seleccionadas';
+      let suppText = meta.hasSuppositionPart ? (meta.suppositionTarget === 'all' ? 'Todos los supuestos (' + meta.suppositionCount + ')' : meta.suppositionCount + ' supuestos aleatorios') : 'Sin supuestos';
+      if (meta.suppositionShortfall) suppText = meta.suppositionCount + ' disponibles / ' + meta.suppositionTarget + ' del plan';
+      counts.textContent = questionText + ' · ' + suppText;
+      const partTrack = document.createElement('div'); partTrack.className = 'challenge-part-progress';
+      const partLabels = document.createElement('div'); partLabels.className = 'challenge-part-labels';
+      const testLabel = document.createElement('span'); testLabel.className = state.test ? 'is-done' : ''; testLabel.textContent = state.test ? '✓ Test' : '○ Test';
+      partLabels.appendChild(testLabel);
+      if (meta.hasSuppositionPart) { const spLabel = document.createElement('span'); spLabel.className = state.practical ? 'is-done' : ''; spLabel.textContent = state.practical ? '✓ Supuestos' : '○ Supuestos'; partLabels.appendChild(spLabel); }
+      partTrack.appendChild(partLabels);
+      const actions = document.createElement('div'); actions.className = 'challenge-parts';
+      if (meta.questionCount) {
+        const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'challenge-part-btn challenge-part-test'; btn.disabled = !!state.test;
+        btn.textContent = state.test ? '✓ Test aprobado' : '▶ Test · ' + meta.questionCount;
+        btn.addEventListener('click', function() { startChallengePart(meta.topic, 'objetivas'); }); actions.appendChild(btn);
+      }
+      if (meta.hasSuppositionPart) {
+        const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'challenge-part-btn challenge-part-practical'; btn.disabled = !!state.practical || meta.suppositionCount === 0;
+        btn.textContent = state.practical ? '✓ Supuestos completados' : (meta.suppositionCount === 0 ? '⚠ Sin registros' : '▣ Supuestos · ' + meta.suppositionCount);
+        btn.addEventListener('click', function() { startChallengePart(meta.topic, 'supuestos'); }); actions.appendChild(btn);
+      }
+      const status = document.createElement('small'); status.className = 'challenge-status';
+      status.textContent = isDone ? 'Desafío completado · Logro desbloqueado' : (state.test ? 'Test aprobado' : 'Test pendiente') + (meta.hasSuppositionPart ? ' · ' + (state.practical ? 'Supuestos completados' : 'Supuestos pendientes') : '');
+      body.appendChild(counts); body.appendChild(partTrack); body.appendChild(actions); body.appendChild(status);
+      card.appendChild(cover); card.appendChild(body); rail.appendChild(card);
+    });
+    section.appendChild(rail); root.appendChild(section);
+  });
+
+  const summary = document.getElementById('challengeSummary');
+  if (summary) summary.textContent = done + ' de ' + total + ' subtemas completados · ' + completedParts + ' partes aprobadas';
+}
+function getChallengePartCount(meta, type) {
+  return type === 'supuestos' ? meta.suppositionCount : meta.questionCount;
+}
+function startChallengePart(topic,type) {
+  const state = getChallengeState(topic);
+  if ((type === 'objetivas' && state.test) || (type === 'supuestos' && state.practical)) return false;
+  const meta = getChallengeTopics().find(function(x) { return x.topic === topic; });
+  if (!meta) return false;
+  const count = getChallengePartCount(meta, type);
+  if (count <= 0) { showEffectToast('No hay registros disponibles para esta parte del desafío.', 'ice'); return false; }
+  pendingChallengePart = { topic: topic, type: type, count: count };
+  const modal = document.getElementById('challengeModeOverlay');
+  const heading = document.getElementById('challengeModeHeading');
+  if (heading) heading.textContent = (type === 'supuestos' ? 'Supuestos prácticos · ' : 'Preguntas tipo test · ') + meta.title;
+  if (modal) {
+    modal.hidden = false;
+    modal.classList.remove('challenge-mode-show');
+    void modal.offsetWidth;
+    modal.classList.add('challenge-mode-show');
+  }
+  return true;
+}
+
+function launchPendingChallengePart(checkMode) {
+  if (!pendingChallengePart) return false;
+  const pending = pendingChallengePart;
+  pendingChallengePart = null;
+  const modal = document.getElementById('challengeModeOverlay');
+  if (modal) { modal.hidden = true; modal.classList.remove('challenge-mode-show'); }
+  activeChallenge = { topic: pending.topic, type: pending.type, count: pending.count, checkMode: checkMode };
+  document.getElementById('testTypeSelect').value = pending.type;
+  initSelects();
+  document.getElementById('modeSelect').value = 'topic';
+  document.getElementById('topicSelect').value = pending.topic;
+  document.getElementById('numQuestions').value = pending.count;
+  document.getElementById('checkMode').value = checkMode;
+  updateSelectionControls();
+  startTest();
+  return true;
+}
+function completeChallengePart(passed, suppressLevelAnimation) {
+  if(!activeChallenge)return;
+  stopStreakShake();
+  const topic=activeChallenge.topic;
+  if(passed) {
+    const stored=playerProfile.challengeProgress[topic] || {test:false,practical:false};
+    if(activeChallenge.type==='objetivas') stored.test=true; else stored.practical=true;
+    playerProfile.challengeProgress[topic]=stored;
+    savePlayerProfile();
+    checkAndUnlockAchievements(!!suppressLevelAnimation);
+  }
+  activeChallenge=null;
+  renderChallengeScreen();
+  if(passed) showEffectToast(challengePartsDone(topic)?'¡SUBTEMA COMPLETADO! Logro desbloqueado.':'Parte del desafío aprobada.','fire');
+  else showEffectToast('Puedes volver a intentarlo. El desafío sigue pendiente.','ice');
 }
 
 function currentTestType() {
@@ -702,31 +1178,59 @@ function currentTestType() {
   return el ? el.value : 'objetivas';
 }
 
+function updateSelectionControls() {
+  const mode = document.getElementById('modeSelect').value;
+  const blockGroup = document.getElementById('blockGroup');
+  const topicGroup = document.getElementById('topicGroup');
+  blockGroup.hidden = mode !== 'block';
+  topicGroup.hidden = mode !== 'topic';
+  blockGroup.style.display = mode === 'block' ? '' : 'none';
+  topicGroup.style.display = mode === 'topic' ? '' : 'none';
+}
+
 function initSelects() {
   const type = currentTestType();
   const blockSelect = document.getElementById('blockSelect');
   const topicSelect = document.getElementById('topicSelect');
+  if (!blockSelect || !topicSelect) return;
 
   const srcLabels = (type === 'supuestos') ? SP_SOURCE_LABELS : PM_SOURCE_LABELS;
   const subLabels = (type === 'supuestos') ? SP_SUBTOPIC_LABELS : PM_SUBTOPIC_LABELS;
   const basePool = (type === 'supuestos') ? ALL_SUPUESTOS : ALL_QUESTIONS;
+  const oldBlock = blockSelect.value;
+  const oldTopic = topicSelect.value;
 
+  // Las opciones se construyen desde los registros reales. Las etiquetas solo
+  // aportan el nombre legible; no pueden ocultar un subtema existente del banco.
+  const sourceKeys = Array.from(new Set(basePool.map(function(q) { return q.source; }).filter(Boolean))).sort();
   blockSelect.innerHTML = '';
-  Object.keys(srcLabels).forEach(function(key) {
+  sourceKeys.forEach(function(key) {
     const opt = document.createElement('option');
     opt.value = key;
-    opt.textContent = srcLabels[key];
+    opt.textContent = srcLabels[key] || ('Bloque ' + key.replace(/^(?:pm|cm)1?([A-H]).*$/i, '$1'));
     blockSelect.appendChild(opt);
   });
+  if (sourceKeys.indexOf(oldBlock) !== -1) blockSelect.value = oldBlock;
 
+  const topicKeys = Array.from(new Set(basePool.map(function(q) { return q.topic; }).filter(Boolean))).sort(function(a,b) { return a.localeCompare(b, 'es', {numeric:true}); });
   topicSelect.innerHTML = '';
-  Object.keys(subLabels).sort().forEach(function(key) {
-    const count = basePool.filter(function(q) { return q.topic === key; }).length;
-    const opt = document.createElement('option');
-    opt.value = key;
-    opt.textContent = subLabels[key] + ' (' + count + ' preg.)';
-    topicSelect.appendChild(opt);
-  });
+  if (!topicKeys.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'No hay subtemas disponibles';
+    topicSelect.appendChild(empty);
+  } else {
+    topicKeys.forEach(function(key) {
+      const count = basePool.filter(function(q) { return q.topic === key; }).length;
+      const opt = document.createElement('option');
+      opt.value = key;
+      const unit = type === 'supuestos' ? 'supuestos' : 'preguntas';
+      opt.textContent = getTopicDisplayLabel(key, subLabels[key] || key) + ' (' + count + ' ' + unit + ')';
+      topicSelect.appendChild(opt);
+    });
+    if (topicKeys.indexOf(oldTopic) !== -1) topicSelect.value = oldTopic;
+  }
+  updateSelectionControls();
 }
 
 function shuffle(array) {
@@ -747,11 +1251,14 @@ function startTest() {
 
   practiceMode = (checkMode === 'practice');
   testFinished = false;
+  testFinishing = false;
   resetScreenMood();
+  stopStreakShake();
 
   const basePool = (type === 'supuestos') ? ALL_SUPUESTOS : ALL_QUESTIONS;
   let pool = basePool;
-  if (mode === 'block') {
+  if (activeChallenge) { pool = basePool.filter(function(q) { return q.topic === activeChallenge.topic; }); }
+  else if (mode === 'block') {
     pool = basePool.filter(function(q) { return q.source === block; });
   } else if (mode === 'topic') {
     pool = basePool.filter(function(q) { return q.topic === topic; });
@@ -767,12 +1274,15 @@ function startTest() {
 
   const indices = Array.from({ length: total }, function(_, i) { return i; });
   shuffle(indices);
-  const selectedIdx = indices.slice(0, n);
+  const requestedCount = activeChallenge ? Math.max(1, Number(activeChallenge.count) || total) : n;
+  const selectedIdx = indices.slice(0, Math.min(total, requestedCount));
   activeQuestions = selectedIdx.map(function(i) { return pool[i]; });
-  activeSessionTitle = getSessionTitle();
+  const challengeMeta = activeChallenge && getChallengeTopics().find(function(x){return x.topic===activeChallenge.topic;});
+  activeSessionTitle = activeChallenge ? ('Desafío ' + (challengeMeta ? challengeMeta.displayLabel : activeChallenge.topic) + ' · ' + (type==='supuestos'?'Supuestos':'Test')) : getSessionTitle();
   userAnswers = new Array(activeQuestions.length).fill(null);
   currentIndex = 0;
 
+  if (activeChallenge) showAppScreen('setupScreen');
   const testArea = document.getElementById('testArea');
   document.getElementById('setupScreen').hidden = false;
   testArea.style.display = 'block';
@@ -828,7 +1338,7 @@ function getHeatLevel(streak) {
 
 function vibrateForStreak(streak) {
   const body = document.body;
-  if (!streak || !playerSettings.effectsEnabled || !playerSettings.shakeEnabled || playerSettings.reducedMotion) {
+  if (!streak || !activeQuestions.length || testFinished || testFinishing || !playerSettings.effectsEnabled || !playerSettings.shakeEnabled || playerSettings.reducedMotion) {
     stopStreakShake();
     return;
   }
@@ -847,7 +1357,7 @@ function vibrateForStreak(streak) {
 
 function stopStreakShake() {
   const body = document.body;
-  body.classList.remove('streak-screen-shaking');
+  body.classList.remove('streak-screen-shaking', 'streak-vibrate-1', 'streak-vibrate-2', 'streak-vibrate-3', 'streak-vibrate-4', 'streak-vibrate-5', 'streak-vibrate-6', 'streak-vibrate-7');
   body.style.removeProperty('--streak-shake-distance');
   body.style.removeProperty('--streak-shake-duration');
 }
@@ -904,9 +1414,17 @@ function showStreakToast(streak) {
 function resetScreenMood() {
   if (screenMoodTimer) window.clearTimeout(screenMoodTimer);
   if (answerEffectTimer) window.clearTimeout(answerEffectTimer);
+  if (resultEffectTimer) window.clearTimeout(resultEffectTimer);
   screenMoodTimer = null;
   answerEffectTimer = null;
-  document.body.classList.remove('heat-level-1', 'heat-level-2', 'heat-level-3', 'heat-level-4', 'heat-level-5', 'heat-level-6', 'heat-level-7', 'freeze-hit');
+  resultEffectTimer = null;
+  answerEffectGeneration++;
+  stopStreakShake();
+  document.body.classList.remove(
+    'heat-level-1', 'heat-level-2', 'heat-level-3', 'heat-level-4',
+    'heat-level-5', 'heat-level-6', 'heat-level-7', 'freeze-hit',
+    'result-flash-good', 'result-flash-bad'
+  );
   const fx = document.getElementById('screenFX');
   if (fx) {
     fx.classList.remove('is-burning', 'is-freezing');
@@ -946,12 +1464,14 @@ function animateAnswerOutcome(isCorrect, afterAnimation) {
   panel.classList.add(isCorrect ? 'answer-success' : 'answer-error');
 
   if (answerEffectTimer) window.clearTimeout(answerEffectTimer);
-  // Primero se percibe claramente el verde/rojo; después llega fuego o hielo.
+  const generation = ++answerEffectGeneration;
   answerEffectTimer = window.setTimeout(function() {
     answerEffectTimer = null;
+    if (generation !== answerEffectGeneration || testFinished || testFinishing) return;
     if (typeof afterAnimation === 'function') afterAnimation();
   }, isCorrect ? 520 : 620);
 }
+
 function triggerFreezeEffect(message) {
   const body = document.body;
   const fx = document.getElementById('screenFX');
@@ -1268,11 +1788,17 @@ function returnToMenu() {
     const leave = window.confirm('Tienes un test en curso. Si vuelves al menú, esta sesión no contará en tus estadísticas. ¿Quieres salir?');
     if (!leave) return;
   }
+  testFinishing = false;
   resetScreenMood();
+  stopStreakShake();
+  pendingChallengePart = null;
+  const challengeModal = document.getElementById('challengeModeOverlay');
+  if (challengeModal) { challengeModal.hidden = true; challengeModal.classList.remove('challenge-mode-show'); }
   activeQuestions = [];
   userAnswers = [];
   currentIndex = 0;
   activeSessionTitle = '';
+  activeChallenge = null;
   testFinished = false;
   document.getElementById('testArea').style.display = 'none';
   document.getElementById('testArea').classList.remove('test-finished');
@@ -1284,7 +1810,10 @@ function returnToMenu() {
 }
 
 function finishTest() {
-  if (!activeQuestions.length || testFinished) return;
+  if (!activeQuestions.length || testFinished || testFinishing) return;
+  testFinishing = true;
+  resetScreenMood();
+  stopStreakShake();
 
   let correct = 0;
   let wrong = 0;
@@ -1319,7 +1848,8 @@ function finishTest() {
   const scorePct = Math.round((score / maxPoints) * 100);
   const passed = score >= maxPoints * 0.5;
   savePlayerProfile();
-  saveCompletedTest({ correct: correct, wrong: wrong, blank: blank, score: score, scorePct: scorePct });
+  saveCompletedTest({ correct: correct, wrong: wrong, blank: blank, score: score, scorePct: scorePct }, true);
+  if (activeChallenge) completeChallengePart(passed, true);
   const gainedXP = playerProfile.totalXP - xpBeforeTest;
   const oldLevel = getPlayerLevelInfo(xpBeforeTest).level;
   const newLevel = getPlayerLevelInfo(playerProfile.totalXP).level;
@@ -1374,8 +1904,11 @@ function finishTest() {
   document.body.classList.remove('result-flash-good', 'result-flash-bad');
   void document.body.offsetWidth;
   document.body.classList.add(outcomeClass);
-  window.setTimeout(function() {
+  if (resultEffectTimer) window.clearTimeout(resultEffectTimer);
+  resultEffectTimer = window.setTimeout(function() {
+    resultEffectTimer = null;
     document.body.classList.remove(outcomeClass);
+    if (!testFinished || !activeQuestions.length) return;
     if (passed) {
       // Aprobar el test activa el fuego al máximo, independientemente de la racha.
       setHeatMood(999);
@@ -1387,6 +1920,7 @@ function finishTest() {
       triggerFreezeEffect('NO APTO · ¡EL EXAMEN SE CONGELA!');
     }
   }, 600);
+  testFinishing = false;
 
   box.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -1399,16 +1933,42 @@ document.getElementById('mobilePrevBtn').addEventListener('click', function() { 
 document.getElementById('mobileNextBtn').addEventListener('click', function() { changeQuestion(1); });
 document.getElementById('mobileFinishBtn').addEventListener('click', finishTest);
 
-document.getElementById('modeSelect').addEventListener('change', function(e) {
-  const mode = e.target.value;
-  document.getElementById('blockGroup').style.display = mode === 'block' ? 'flex' : 'none';
-  document.getElementById('topicGroup').style.display = mode === 'topic' ? 'flex' : 'none';
+document.getElementById('modeSelect').addEventListener('change', function() {
+  updateSelectionControls();
+  initSelects();
 });
 
-document.getElementById('testTypeSelect').addEventListener('change', initSelects);
+document.getElementById('testTypeSelect').addEventListener('change', function() {
+  initSelects();
+  updateSelectionControls();
+});
+
+document.getElementById('challengePracticeBtn').addEventListener('click', function() { launchPendingChallengePart('practice'); });
+document.getElementById('challengeExamBtn').addEventListener('click', function() { launchPendingChallengePart('exam'); });
+document.getElementById('challengeModeCancel').addEventListener('click', function() {
+  pendingChallengePart = null;
+  const modal = document.getElementById('challengeModeOverlay');
+  if (modal) { modal.hidden = true; modal.classList.remove('challenge-mode-show'); }
+});
+document.getElementById('achievementRevealClose').addEventListener('click', closeAchievementReveal);
+document.getElementById('levelUpContinueBtn').addEventListener('click', closeLevelUpAnimation);
+document.getElementById('achievementRevealOverlay').addEventListener('click', function(event) { if (event.target === this) closeAchievementReveal(); });
+document.getElementById('levelUpOverlay').addEventListener('click', function(event) { if (event.target === this) closeLevelUpAnimation(); });
 
 // Atajos de teclado para moverse por el test sin interferir con los campos.
 document.addEventListener('keydown', function(event) {
+  if (event.key === 'Escape') {
+    const achievementOverlay = document.getElementById('achievementRevealOverlay');
+    const levelOverlay = document.getElementById('levelUpOverlay');
+    const challengeOverlay = document.getElementById('challengeModeOverlay');
+    const dailyOverlay = document.getElementById('dailyEntryOverlay');
+    if (achievementOverlay && !achievementOverlay.hidden) { closeAchievementReveal(); return; }
+    if (levelOverlay && !levelOverlay.hidden) { closeLevelUpAnimation(); return; }
+    if (challengeOverlay && !challengeOverlay.hidden) {
+      pendingChallengePart = null; challengeOverlay.hidden = true; challengeOverlay.classList.remove('challenge-mode-show'); return;
+    }
+    if (dailyOverlay && !dailyOverlay.hidden) { closeDailyEntry(); return; }
+  }
   const testArea = document.getElementById('testArea');
   if (testArea.style.display === 'none' || !activeQuestions.length) return;
   if (event.target && ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].indexOf(event.target.tagName) !== -1) return;
@@ -1420,6 +1980,8 @@ document.addEventListener('keydown', function(event) {
 // Navegación del menú principal.
 document.getElementById('homeBtn').addEventListener('click', returnToMenu);
 document.getElementById('menuStartBtn').addEventListener('click', openSetupScreen);
+document.getElementById('menuChallengesBtn').addEventListener('click', function(){showAppScreen('challengeScreen');});
+document.getElementById('dailyEntryClose').addEventListener('click', closeDailyEntry);
 document.getElementById('menuOptionsBtn').addEventListener('click', function() { showAppScreen('optionsScreen'); });
 document.getElementById('menuProfileBtn').addEventListener('click', function() { showAppScreen('profileScreen'); });
 document.getElementById('setupBackBtn').addEventListener('click', returnToMenu);
@@ -1469,7 +2031,167 @@ document.getElementById('resetStatsBtn').addEventListener('click', function() {
   showEffectToast('Estadísticas reiniciadas', 'fire');
 });
 
+
+// API de diagnóstico para pruebas manuales desde DevTools (F12 → Consola).
+// Las acciones de simulación modifican el perfil local; resetProfile() borra todo el progreso.
+window.TransportistaDebug = Object.freeze({
+  help: function() {
+    return [
+      'TransportistaDebug.status() — resumen del perfil, nivel, XP y racha.',
+      'TransportistaDebug.checkData() — totales del banco y diferencias entre PDF y data.js.',
+      'TransportistaDebug.challenges() — lista desafíos y estados; acepta letra de bloque: challenges("A").',
+      'TransportistaDebug.challengeSet("1A04", "supuestos") — muestra una muestra aleatoria sin iniciar el test.',
+      'TransportistaDebug.startChallenge("1A04", "supuestos", "practice") — inicia en práctica; usa "exam" para examen.',
+      'TransportistaDebug.completeChallenge("1A04", "objetivas", true) — simula aprobar una parte y paga sus logros.',
+      'TransportistaDebug.listAchievements() — lista IDs, rareza, XP y desbloqueo.',
+      'TransportistaDebug.unlockAchievement("first-test") — fuerza un logro y paga XP una sola vez.',
+      'TransportistaDebug.setXP(1200, true) / addXP(100, true) — prueba XP y animación de nivel.',
+      'TransportistaDebug.levelUpTo(15) — coloca el perfil en nivel 15.',
+      'TransportistaDebug.previewDaily(7, false, 7) — previsualiza la racha diaria sin guardarla.',
+      'TransportistaDebug.previewDaily(1, true, 1) — previsualiza la pérdida de racha con copo de nieve.',
+      'TransportistaDebug.previewFire() / previewIce() / clearEffects() — prueba efectos visuales.',
+      'TransportistaDebug.resetChallenges(true) — borra progreso y devuelve XP de logros de desafíos.',
+      'TransportistaDebug.resetProfile() — BORRA todo el perfil local, XP, logros, rachas e historial.'
+    ].join('\n');
+  },
+  status: function() {
+    const info=getPlayerLevelInfo(playerProfile.totalXP);
+    return {
+      name:playerProfile.name, xp:Math.floor(playerProfile.totalXP), maxXP:getXPForMaximumLevel(),
+      level:info.level, rank:info.rank.title, achievementsUnlocked:playerProfile.unlockedAchievements.length,
+      daysUsed:playerProfile.dailyUsageDates.length, dailyStreak:playerProfile.dailyStreak,
+      bestDailyStreak:playerProfile.bestDailyStreak,
+      challengesDone:getChallengeTopics().filter(function(x){return challengePartsDone(x.topic);}).length,
+      challengeTopics:getChallengeTopics().length
+    };
+  },
+  checkData: function() {
+    const topics=getChallengeTopics();
+    return {
+      objectiveQuestions:ALL_QUESTIONS.length,
+      practicalCases:ALL_SUPUESTOS.length,
+      topicCount:topics.length,
+      topics:topics.map(function(m){return {
+        topic:m.topic,label:m.displayLabel,
+        questionsInData:m.questions,questionsForChallenge:m.questionCount,questionsRequestedByPDF:m.questionTarget,questionShortfall:m.questionShortfall,
+        practicalCasesInData:m.suppositions,practicalCasesForChallenge:m.suppositionCount,practicalRule:m.suppositionTarget
+      };})
+    };
+  },
+  challenges: function(moduleLetter) {
+    return getChallengeTopics().filter(function(m){return !moduleLetter || m.module===String(moduleLetter).toUpperCase();}).map(function(m){
+      const s=getChallengeState(m.topic);
+      return {topic:m.topic,label:m.displayLabel,questions:m.questionCount,practical:m.suppositionCount,needsPractical:m.hasSuppositionPart,testDone:s.test,practicalDone:s.practical,complete:challengePartsDone(m.topic)};
+    });
+  },
+  challengeSet: function(topic,type) {
+    const meta=getChallengeTopics().find(function(m){return m.topic===topic;});
+    if(!meta) throw new Error('Tema no encontrado: '+topic);
+    const pool=(type==='supuestos'?ALL_SUPUESTOS:ALL_QUESTIONS).filter(function(q){return q.topic===topic;});
+    const count=getChallengePartCount(meta,type==='supuestos'?'supuestos':'objetivas');
+    return shuffle(pool.slice()).slice(0,count).map(function(q){return {code:q.code,topic:q.topic,question:(q.question||q.question_lines||[]).toString().slice(0,180)};});
+  },
+  startChallenge: function(topic,type,mode) {
+    if(!['objetivas','supuestos'].includes(type)) throw new Error('type debe ser "objetivas" o "supuestos"');
+    if(mode !== undefined && !['practice','exam'].includes(mode)) throw new Error('mode debe ser "practice" o "exam"');
+    const started=startChallengePart(topic,type);
+    if(started && mode) launchPendingChallengePart(mode);
+    return {started:started,awaitingMode:!!pendingChallengePart,mode:mode||null,activeTopic:activeChallenge&&activeChallenge.topic,activeType:activeChallenge&&activeChallenge.type,questions:activeQuestions.length};
+  },
+  completeChallenge: function(topic,type,passed) {
+    if(activeQuestions.length && !testFinished) throw new Error('Finaliza o abandona primero el test activo.');
+    if(!['objetivas','supuestos'].includes(type)) throw new Error('type debe ser "objetivas" o "supuestos"');
+    activeChallenge={topic:topic,type:type};
+    completeChallengePart(passed!==false);
+    renderMainMenu();
+    if(!document.getElementById('profileScreen').hidden) renderProfileScreen();
+    return this.challenges().find(function(x){return x.topic===topic;});
+  },
+  listAchievements: function() {
+    return getAchievementDefinitions().map(function(a){return {id:a.id,title:a.secret&&!playerProfile.unlockedAchievements.includes(a.id)?'Logro secreto':a.title,rarity:a.rarity,xp:getAchievementXPForRarity(a.rarity),unlocked:playerProfile.unlockedAchievements.includes(a.id),progress:a.progress,target:a.target};});
+  },
+  unlockAchievement: function(id) {
+    const item=getAchievementDefinitions().find(function(a){return a.id===id;});
+    if(!item) throw new Error('Logro no encontrado: '+id);
+    if(playerProfile.achievementXPClaimed.includes(id)) return {id:id,alreadyPaid:true,xp:0};
+    const oldLevel=getPlayerLevelInfo(playerProfile.totalXP).level;
+    if(!playerProfile.unlockedAchievements.includes(id)) playerProfile.unlockedAchievements.push(id);
+    const reward=getAchievementXPForRarity(item.rarity);
+    playerProfile.totalXP=Math.floor(playerProfile.totalXP)+reward;
+    playerProfile.achievementXPClaimed.push(id);
+    savePlayerProfile(); renderMainMenu();
+    if(!document.getElementById('profileScreen').hidden) renderProfileScreen();
+    enqueueAchievementReveal(item, reward, true);
+    if(getPlayerLevelInfo(playerProfile.totalXP).level>oldLevel) showLevelUpAnimation(oldLevel,getPlayerLevelInfo(playerProfile.totalXP).level);
+    return {id:id,reward:reward,xp:playerProfile.totalXP};
+  },
+  setXP: function(value,animate) {
+    const target=Math.max(0,Math.floor(Number(value)||0));
+    const oldLevel=getPlayerLevelInfo(playerProfile.totalXP).level;
+    playerProfile.totalXP=target; savePlayerProfile(); renderMainMenu(); updateInTestPlayerHUD();
+    if(!document.getElementById('profileScreen').hidden) renderProfileScreen();
+    const nextLevel=getPlayerLevelInfo(playerProfile.totalXP).level;
+    if(animate!==false && nextLevel>oldLevel) showLevelUpAnimation(oldLevel,nextLevel);
+    return {xp:target,oldLevel:oldLevel,newLevel:nextLevel,info:getPlayerLevelInfo(target)};
+  },
+  addXP: function(value,animate) { return this.setXP(Math.floor(playerProfile.totalXP)+Math.max(0,Math.floor(Number(value)||0)),animate); },
+  levelUpTo: function(level) {
+    const target=Math.max(1,Math.min(PLAYER_RANKS.length,Math.floor(Number(level)||1)));
+    let xp=0; for(let i=1;i<target;i++) xp+=xpRequiredForLevel(i);
+    return this.setXP(xp,true);
+  },
+  previewDaily: function(streak,broken,usedThisWeek) {
+    const originalStreak=playerProfile.dailyStreak, originalDates=playerProfile.dailyUsageDates;
+    const n=Math.max(1,Math.min(999,Math.floor(Number(streak)||1)));
+    const used=Math.max(0,Math.min(7,Math.floor(Number(usedThisWeek===undefined?n:usedThisWeek)||0)));
+    const today=new Date(); const monday=new Date(today); monday.setDate(today.getDate()-(today.getDay()+6)%7);
+    const dates=[]; for(let i=0;i<used;i++){const d=new Date(monday);d.setDate(monday.getDate()+i);dates.push(localDateKey(d));}
+    playerProfile.dailyStreak=n; playerProfile.dailyUsageDates=dates;
+    dailyEntryState={today:localDateKey(),broken:!!broken}; showDailyEntry();
+    playerProfile.dailyStreak=originalStreak; playerProfile.dailyUsageDates=originalDates;
+    return {previewed:true,streak:n,broken:!!broken,daysShown:used};
+  },
+  previewFire: function() { resetScreenMood(); setHeatMood(999); spawnFlames(72,7); spawnEmbers(90); return 'Fuego máximo activado'; },
+  previewIce: function() { triggerFreezeEffect('PRUEBA · EFECTO DE HIELO'); return 'Efecto de hielo activado'; },
+  clearEffects: function() { resetScreenMood(); stopStreakShake(); return 'Efectos detenidos'; },
+  resetChallenges: function(refundRewards) {
+    const ids=getChallengeTopics().flatMap(function(m){return ['challenge-test-'+m.topic,'challenge-practical-'+m.topic,'challenge-complete-'+m.topic];});
+    if(refundRewards!==false) {
+      const defs=getAchievementDefinitions();
+      ids.forEach(function(id){if(playerProfile.achievementXPClaimed.includes(id)){const def=defs.find(function(x){return x.id===id;}); if(def)playerProfile.totalXP=Math.max(0,playerProfile.totalXP-getAchievementXPForRarity(def.rarity));}});
+    }
+    playerProfile.challengeProgress={};
+    playerProfile.unlockedAchievements=playerProfile.unlockedAchievements.filter(function(id){return ids.indexOf(id)===-1;});
+    playerProfile.achievementXPClaimed=playerProfile.achievementXPClaimed.filter(function(id){return ids.indexOf(id)===-1;});
+    savePlayerProfile(); renderChallengeScreen(); renderMainMenu();
+    if(!document.getElementById('profileScreen').hidden) renderProfileScreen();
+    return 'Progreso de desafíos reiniciado.';
+  },
+  resetProfile: function() {
+    const name=playerProfile.name;
+    resetScreenMood();
+    stopStreakShake();
+    clearCelebrationOverlays();
+    activeQuestions=[]; userAnswers=[]; currentIndex=0; activeChallenge=null; pendingChallengePart=null;
+    activeSessionTitle=''; testFinished=false; testFinishing=false; practiceMode=false;
+    document.getElementById('testArea').style.display='none';
+    document.getElementById('testArea').classList.remove('test-finished');
+    document.getElementById('scoreBox').innerHTML='';
+    document.getElementById('scoreBox').className='';
+    document.getElementById('controls').style.display='';
+    document.getElementById('mobileDock').hidden=true;
+    playerProfile=defaultPlayerProfile(); playerProfile.name=name;
+    savePlayerProfile(); renderMainMenu(); renderChallengeScreen();
+    if(!document.getElementById('profileScreen').hidden) renderProfileScreen();
+    showAppScreen('mainMenu');
+    return 'Perfil reiniciado. Las opciones de la aplicación se mantienen.';
+  }
+});
+
 // Inicializar selectores, preferencias locales y menú inicial.
 initSelects();
+updateSelectionControls();
 applyPlayerSettings();
+registerDailyVisit();
 showAppScreen('mainMenu');
+showDailyEntry();
